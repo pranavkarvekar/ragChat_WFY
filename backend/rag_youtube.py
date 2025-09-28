@@ -16,7 +16,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 llm = ChatGroq(
-    model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+    model_name="llama-3.3-70b-versatile",
     temperature=0.7,
     api_key=GROQ_API_KEY
 )
