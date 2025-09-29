@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -27,6 +28,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = [
     'ragchat-wfy-elj5.onrender.com',
+    'ragchat-wfy-1.onrender.com',
     'localhost',
     '127.0.0.1',
 ]
@@ -139,7 +141,12 @@ LOGIN_REDIRECT_URL = 'home'
 LOGOUT_REDIRECT_URL = 'login'
 
 # CSRF settings for API endpoints
+# CSRF settings for API endpoints
+
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:8000',
     'http://127.0.0.1:8000',
 ]
+
+# Set USER_AGENT from environment variable if available
+USER_AGENT = os.environ.get('USER_AGENT', 'ragChatWFY/1.0')
