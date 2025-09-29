@@ -26,6 +26,7 @@ SECRET_KEY = 'django-insecure-^00*h4lb(js%$3e%4-tps6g&!-xbg@y(7nzjsc8m1lkwb&hm6p
 DEBUG = True
 
 ALLOWED_HOSTS = [
+    'ragchat-wfy-elj5.onrender.com',
     'localhost',
     '127.0.0.1',
 ]

@@ -13,3 +13,4 @@ yt-dlp
 youtube-transcript-api
 Pillow
 numpy
+gunicorn
