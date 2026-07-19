@@ -8,6 +8,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.8"
+      - key: TORCH_INDEX
+        value: "cpu"
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG
