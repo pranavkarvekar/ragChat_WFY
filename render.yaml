@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: ragchat-wfy
+    runtime: python
+    plan: starter
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: gunicorn ragWFY.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com,localhost,127.0.0.1"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://ragchat-wfy.onrender.com,https://ragchat-wfy-elj5.onrender.com,https://ragchat-wfy-1.onrender.com"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MILVUS_DB_PATH
+        value: "./milvus_ragwfy.db"
+      - key: USER_AGENT
+        value: "ragChat-WFY/1.0"

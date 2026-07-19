@@ -1,0 +1,37 @@
+# Environment files
+.env
+.env.*
+
+# Python virtual environments
+venv/
+.venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Database files
+*.sqlite3
+
+# Milvus Lite vector database
+*.db
+milvus_ragwfy.db/
+
+# TF-IDF/BM25 model cache (auto-generated, do not commit)
+bm25_models/
+
+# Django static/media collected files
+staticfiles/
+media/
+
+# Byte-compiled / optimized files
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌐 Chat with Website - RAG Chat</title>
+    <style>
+        :root{ --focus: rgba(17,24,39,.35); --primary:#6366f1; --primaryDark:#4f46e5; --surface:#1a1a1a; --surface2:#242424; --border:#374151; --text:#fff; --muted:#a1a1aa; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background:#000; color:var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+        .header { background: var(--surface); padding: 18px 24px; border-bottom:1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+        .header-content { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .header-title { display: flex; align-items: center; gap: 15px; }
+        .header-icon { font-size: 1.4rem; background: linear-gradient(135deg, #ff6b9d, var(--primary)); padding: 10px; border-radius: 10px; color: white; }
+        .header-text h1 { font-size: 1.2rem; font-weight: 800; color: var(--text); margin-bottom: 2px; }
+        .header-text p { color: var(--muted); font-size: 0.9rem; }
+        .header-actions { display: flex; gap: 10px; align-items: center; }
+        .home-btn { background: var(--surface2); color: var(--text); border: 1px solid var(--border); padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700; text-decoration: none; }
+        .new-chat-btn { background: linear-gradient(135deg, var(--primary), var(--primaryDark)); color: white; border: none; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; }
+        .new-chat-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(76, 175, 80, 0.3); }
+        .logout-btn { background: var(--surface2); border:1px solid var(--border); color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700; text-decoration: none; transition: all 0.2s ease; }
+        .logout-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(255, 107, 107, 0.3); }
+        .main-container { max-width: 1200px; margin: 0 auto; padding: 24px; flex: 1; display: flex; gap: 24px; }
+        .sidebar { width: 300px; background: var(--surface2); border-radius: 14px; padding: 20px; border: 1px solid var(--border); height: fit-content; }
+        .sidebar h3 { color: var(--text); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+        .chat-list { display: flex; flex-direction: column; gap: 10px; }
+        .chat-item { padding: 15px; background: rgba(102, 126, 234, 0.05); border-radius: 12px; cursor: pointer; transition: all 0.3s ease; border: 2px solid transparent; }
+        .chat-item:hover { background: rgba(102, 126, 234, 0.1); border-color: rgba(102, 126, 234, 0.3); }
+        .chat-item.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .chat-item-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 5px; }
+        .chat-item-url { font-size: 0.8rem; opacity: 0.7; word-break: break-all; }
+        .chat-area { flex: 1; background: var(--surface2); border-radius: 14px; padding: 24px; border: 1px solid var(--border); display: flex; flex-direction: column; }
+        .url-input-section { background: rgba(99,102,241,.06); border-radius: 12px; padding: 18px; margin-bottom: 20px; border: 1px solid rgba(99,102,241,.2); }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+        .form-group input, .form-group textarea { width: 100%; padding: 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 16px; transition: all 0.2s ease; background: var(--surface); color: var(--text); }
+        .form-group input:focus, .form-group textarea:focus { outline: 3px solid transparent; border-color: var(--primary); box-shadow: 0 0 0 4px var(--focus); }
+        .ask-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 15px 30px; border-radius: 12px; cursor: pointer; font-weight: 600; font-size: 16px; transition: all 0.3s ease; display: flex; align-items: center; gap: 10px; justify-content: center; }
+        .ask-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3); }
+        .ask-btn:focus{ outline: 3px solid transparent; box-shadow: 0 0 0 4px var(--focus); }
+        .ask-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        .chat-messages { flex: 1; overflow-y: auto; margin-bottom: 20px; max-height: 400px; padding-right: 10px; }
+        .message { margin-bottom: 20px; animation: fadeInUp 0.5s ease-out; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user { text-align: right; }
+        .message-bubble { display: inline-block; max-width: 80%; padding: 15px 20px; border-radius: 20px; word-wrap: break-word; }
+        .message.user .message-bubble { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-bottom-right-radius: 5px; }
+        .message.assistant .message-bubble { background: #0f172a; color: #e5e7eb; border: 1px solid #1f2937; border-bottom-left-radius: 5px; }
+        .message-time { font-size: 0.8rem; opacity: 0.6; margin-top: 5px; }
+        .loading-indicator { display: none; text-align: center; padding: 20px; }
+        .loading-dots { display: inline-flex; gap: 4px; }
+        .loading-dot { width: 8px; height: 8px; background: #667eea; border-radius: 50%; animation: loading 1.4s infinite; }
+        .loading-dot:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes loading { 0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+        .empty-state { text-align: center; color: var(--muted); padding: 40px; }
+        .empty-state-icon { font-size: 3rem; margin-bottom: 15px; opacity: 0.5; }
+        .website-info { background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.3); border-radius: 12px; padding: 15px; margin-bottom: 20px; display: none; color:var(--text); }
+        .website-info.show { display: block; animation: fadeInUp 0.5s ease-out; }
+        .website-info h4 { color: #10b981; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .website-info p { color: var(--muted); font-size: 0.9rem; }
+        /* ── SSE streaming ── */
+        .typing-cursor { display: inline-block; width: 2px; height: 1.05em; background: #6366f1; margin-left: 2px; vertical-align: text-bottom; animation: cur-blink 0.9s step-end infinite; }
+        @keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+        .status-msg { color: #6366f1; font-size: 0.82rem; font-style: italic; display: block; margin-bottom: 6px; }
+        .streaming-bubble { min-width: 48px; }
+    </style>
+</head>
+<body>
+    <a href="#main" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;">Skip to content</a>
+    <div class="header" role="banner">
+        <div class="header-content">
+            <div class="header-title">
+                <div class="header-icon">🌐</div>
+                <div class="header-text">
+                    <h1>Chat with Website</h1>
+                    <p>Analyze and discuss web content with AI</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="{% url 'home' %}" class="home-btn">🏠 Home</a>
+                <button class="new-chat-btn" onclick="createNewChat()"><span>➕</span> New Chat</button>
+                <a href="{% url 'logout' %}" class="logout-btn">🔓 Logout</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container" role="main" id="main">
+        <div class="sidebar">
+            <h3><span>💬</span> Chat History</h3>
+            <div class="chat-list" id="chatList"></div>
+            <div style="margin-top:12px; display:flex; gap:8px;">
+                <button class="new-chat-btn" style="background:#ef4444" onclick="clearChatHistory()">🗑️ Clear History</button>
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div class="url-input-section">
+                <div class="form-group">
+                    <label for="websiteUrl"><span>🔗</span> Website URL:</label>
+                    <input type="url" id="websiteUrl" placeholder="Enter website URL (e.g., https://example.com)" />
+                </div>
+                <div class="form-group">
+                    <label for="userQuestion"><span>❓</span> Your Question:</label>
+                    <textarea id="userQuestion" rows="3" placeholder="Ask something about the website..."></textarea>
+                </div>
+                <button class="ask-btn" id="askBtn" onclick="askQuestion()"><span>🚀</span> Ask Question</button>
+            </div>
+
+            <div class="website-info" id="websiteInfo">
+                <h4><span>✅</span> Website Loaded</h4>
+                <p id="websiteInfoText"></p>
+            </div>
+
+            <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-relevant="additions">
+                <div class="empty-state">
+                    <div class="empty-state-icon">💭</div>
+                    <h3>Start a Conversation</h3>
+                    <p>Enter a website URL and ask a question to begin chatting about the content.</p>
+                </div>
+            </div>
+
+            <div class="loading-indicator" id="loadingIndicator">
+                <div class="loading-dots">
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                </div>
+                <p style="margin-top: 10px; color: #666;">Analyzing website and generating response...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentChatId = null, chatHistory = {}, chatCounter = 1;
+
+        /* ── Persistence ── */
+        function loadChatHistory() { const s = sessionStorage.getItem('webChatHistory'); if (s) { chatHistory = JSON.parse(s); chatCounter = Object.keys(chatHistory).length + 1; updateChatList(); } }
+        function saveChatHistory() { sessionStorage.setItem('webChatHistory', JSON.stringify(chatHistory)); }
+        function clearChatHistory() { if (!confirm('Delete all web chat history?')) return; chatHistory = {}; currentChatId = null; chatCounter = 1; saveChatHistory(); updateChatList(); document.getElementById('chatMessages').innerHTML = `<div class="empty-state"><div class="empty-state-icon">💭</div><h3>No chats</h3><p>Click New Chat to begin.</p></div>`; }
+
+        /* ── Chat management ── */
+        function createNewChat() { currentChatId = `chat_${Date.now()}`; chatHistory[currentChatId] = { title: `Chat ${chatCounter++}`, url: '', messages: [], created: new Date().toLocaleString(), source_id: null }; document.getElementById('websiteUrl').value = ''; document.getElementById('userQuestion').value = ''; document.getElementById('chatMessages').innerHTML = `<div class="empty-state"><div class="empty-state-icon">💭</div><h3>New Chat Started</h3><p>Enter a URL and ask a question.</p></div>`; document.getElementById('websiteInfo').classList.remove('show'); updateChatList(); saveChatHistory(); }
+        function loadChat(id) { currentChatId = id; const chat = chatHistory[id]; document.getElementById('websiteUrl').value = chat.url; document.getElementById('websiteInfo').classList.remove('show'); const mc = document.getElementById('chatMessages'); mc.innerHTML = ''; if (!chat.messages.length) { mc.innerHTML = `<div class="empty-state"><div class="empty-state-icon">💭</div><h3>Resume Chat</h3><p>${chat.url || 'No URL set'}</p></div>`; } else { chat.messages.forEach(m => addMessageToChat(m.type, m.content, m.timestamp, false)); if (chat.url) showWebsiteInfo(chat.url); } updateChatList(); }
+        function updateChatList() { const cl = document.getElementById('chatList'); cl.innerHTML = ''; if (!Object.keys(chatHistory).length) { cl.innerHTML = `<div style="text-align:center;color:#666;padding:20px"><p>No history yet.</p></div>`; return; } Object.entries(chatHistory).reverse().forEach(([id, chat]) => { const item = document.createElement('div'); item.className = `chat-item ${id === currentChatId ? 'active' : ''}`; item.onclick = () => loadChat(id); const host = chat.url ? (() => { try { return new URL(chat.url).hostname; } catch { return chat.url; } })() : 'No URL'; item.innerHTML = `<div class="chat-item-title">${chat.title}</div><div class="chat-item-url">${host}</div><div style="font-size:.7rem;opacity:.6;margin-top:4px">${chat.created}</div>`; cl.appendChild(item); }); }
+        function showWebsiteInfo(url) { const host = (() => { try { return new URL(url).hostname; } catch { return url; } })(); document.getElementById('websiteInfoText').textContent = `Loaded: ${host}`; document.getElementById('websiteInfo').classList.add('show'); }
+        function addMessageToChat(type, content, timestamp, save = true) { const mc = document.getElementById('chatMessages'); const es = mc.querySelector('.empty-state'); if (es) es.remove(); const div = document.createElement('div'); div.className = `message ${type}`; const time = timestamp || new Date().toLocaleTimeString(); div.innerHTML = `<div class="message-bubble">${content.replace(/\n/g,'<br>')}</div><div class="message-time">${time}</div>`; mc.appendChild(div); mc.scrollTop = mc.scrollHeight; if (save && currentChatId) { chatHistory[currentChatId].messages.push({ type, content, timestamp: time }); saveChatHistory(); } }
+
+        /* ── SSE streaming bubble helpers ── */
+        function _addStreamingBubble() {
+            const mc = document.getElementById('chatMessages');
+            const es = mc.querySelector('.empty-state'); if (es) es.remove();
+            const id = `bubble_${Date.now()}`;
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.innerHTML = `<div class="message-bubble streaming-bubble" id="${id}"><span class="status-msg" id="st_${id}">⏳ Connecting...</span><span class="typing-cursor"></span></div><div class="message-time">${new Date().toLocaleTimeString()}</div>`;
+            mc.appendChild(div); mc.scrollTop = mc.scrollHeight;
+            return id;
+        }
+        function _setStatus(bid, txt) { const el = document.getElementById(`st_${bid}`); if (el) el.textContent = txt; }
+        function _updateBubble(bid, text) { const b = document.getElementById(bid); if (!b) return; b.innerHTML = `<span class="status-msg" id="st_${bid}" style="display:none"></span>${text.replace(/\n/g,'<br>')}<span class="typing-cursor"></span>`; const mc = b.closest('.chat-messages'); if (mc) mc.scrollTop = mc.scrollHeight; }
+        function _finalizeBubble(bid, text) { const b = document.getElementById(bid); if (!b) return; b.innerHTML = text.replace(/\n/g,'<br>') || '(empty response)'; b.classList.remove('streaming-bubble'); const mc = b.closest('.chat-messages'); if (mc) mc.scrollTop = mc.scrollHeight; if (currentChatId && text) { chatHistory[currentChatId].messages.push({ type:'assistant', content: text, timestamp: new Date().toLocaleTimeString() }); saveChatHistory(); } }
+
+        function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+        async function pollStatus(source_id, updateCb) {
+            while (true) {
+                const resp = await fetch(`/api/status/?source_id=${encodeURIComponent(source_id)}`);
+                if (!resp.ok) throw new Error("Failed to check status");
+                const data = await resp.json();
+                if (data.status === "ready") return;
+                if (data.status === "failed") throw new Error(data.error || "Ingestion failed");
+                if (updateCb && data.progress) updateCb(data.progress);
+                await delay(1000);
+            }
+        }
+
+        /* ── Main ask (SSE via fetch ReadableStream) ── */
+        async function askQuestion() {
+            const url = document.getElementById('websiteUrl').value.trim();
+            const question = document.getElementById('userQuestion').value.trim();
+            const activeChat = chatHistory[currentChatId];
+            if (!url || !question) { alert('Please enter both a URL and a question.'); return; }
+            if (!activeChat) { alert('Please select or create a chat first.'); return; }
+
+            const needIngest = !activeChat.source_id || activeChat.url !== url;
+            if (needIngest) {
+                activeChat.url = url;
+                activeChat.title = `Chat about ${(() => { try { return new URL(url).hostname; } catch { return url; } })()}`;
+                showWebsiteInfo(url); updateChatList();
+            }
+
+            addMessageToChat('user', question);
+            document.getElementById('userQuestion').value = '';
+            document.getElementById('loadingIndicator').style.display = 'block';
+            document.getElementById('askBtn').disabled = true;
+
+            const statusTextEl = document.querySelector('#loadingIndicator p');
+            let bubbleId = null, fullText = '';
+            try {
+                let source_id = activeChat.source_id;
+
+                if (needIngest) {
+                    statusTextEl.textContent = "Scraping webpage...";
+                    const form = new FormData();
+                    form.append('url', url);
+                    
+                    const resp = await fetch('/api/web/', { method: 'POST', body: form });
+                    if (!resp.ok) { let m = `HTTP ${resp.status}`; try { const d = await resp.json(); m = d.error || m; } catch {} throw new Error(m); }
+                    
+                    const data = await resp.json();
+                    source_id = data.source_id;
+                    activeChat.source_id = source_id;
+                    saveChatHistory();
+
+                    if (data.status === "processing") {
+                        statusTextEl.textContent = "Processing: " + (data.progress || "Indexing...");
+                        await pollStatus(source_id, (progress) => {
+                            statusTextEl.textContent = "Processing: " + progress;
+                        });
+                    }
+                }
+
+                document.getElementById('loadingIndicator').style.display = 'none';
+                bubbleId = _addStreamingBubble();
+                _setStatus(bubbleId, "Generating response...");
+
+                const chatForm = new FormData();
+                chatForm.append('source_id', source_id);
+                chatForm.append('question', question);
+                chatForm.append('source_type', 'web');
+
+                const chatResp = await fetch('/api/chat/', { method: 'POST', body: chatForm });
+                if (!chatResp.ok) { let m = `HTTP ${chatResp.status}`; try { const d = await chatResp.json(); m = d.error || m; } catch {} throw new Error(m); }
+
+                const reader = chatResp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+                outer: while (true) {
+                    const { done, value } = await reader.read(); if (done) break;
+                    buf += dec.decode(value, { stream: true });
+                    const lines = buf.split('\n'); buf = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const raw = line.slice(6).trim();
+                        if (raw === '[DONE]') break outer;
+                        try { const msg = JSON.parse(raw); if (msg.error) { fullText = `⚠️ ${msg.error}`; _updateBubble(bubbleId, fullText); } else if (msg.token !== undefined) { fullText += msg.token; _updateBubble(bubbleId, fullText); } } catch {}
+                    }
+                }
+                _finalizeBubble(bubbleId, fullText);
+            } catch(e) {
+                document.getElementById('loadingIndicator').style.display = 'none';
+                const errTxt = `⚠️ Error: ${e.message}`;
+                if (bubbleId) _finalizeBubble(bubbleId, errTxt); else addMessageToChat('assistant', errTxt);
+            } finally {
+                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('askBtn').disabled = false;
+                if (statusTextEl) statusTextEl.textContent = "Analyzing website and generating response...";
+            }
+        }
+
+        document.getElementById('userQuestion').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askQuestion(); } });
+        loadChatHistory();
+        if (!Object.keys(chatHistory).length) createNewChat();
+    </script>
+</body>
+</html>
