@@ -2,46 +2,39 @@ from django.apps import AppConfig
 
 
 class BackendConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'backend'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "backend"
 
     def ready(self) -> None:
         """
-        Pre-load heavy singletons in a background thread so the first HTTP
-        request is never blocked by model / DB initialisation.
+        Optional model warmup. Disabled by default on Render/Gunicorn so the
+        worker stays alive (loading torch + Milvus at boot often OOMs → 502).
+        Models still load lazily on the first RAG request.
 
-        Guards against Django's StatReloader: the reloader forks a child
-        worker process and sets RUN_MAIN='true' in it.  We only warm up in
-        that child — never in the parent watcher — to avoid two processes
-        fighting over the Milvus Lite lock file.
+        Set ENABLE_WARMUP=1 to turn boot warmup back on (needs enough RAM).
         """
         import os
         import sys
         import threading
 
-        # Skip warmup in Django's StatReloader parent only (runserver watcher).
-        # Gunicorn/production never sets RUN_MAIN — still warm up there.
+        # Never warm up in runserver parent reloader
         if "runserver" in sys.argv and os.environ.get("RUN_MAIN") != "true":
+            return
+
+        # Skip on cloud/gunicorn unless explicitly enabled
+        if os.environ.get("ENABLE_WARMUP", "").lower() not in ("1", "true", "yes"):
             return
 
         def _warmup() -> None:
             try:
-                # 1. Boot Milvus Lite gRPC server + ensure collection exists
-                # pyrefly: ignore [missing-import]
                 from .milvus_client import get_client
                 get_client()
-
-                # 2. Load sentence-transformers dense embedder into memory
-                # pyrefly: ignore [missing-import]
                 from .embeddings import get_dense_embedder
                 get_dense_embedder()
-
-            except Exception as exc:          # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 import logging
                 logging.getLogger(__name__).warning(
                     "Warmup failed (will retry on first request): %s", exc
                 )
 
-        t = threading.Thread(target=_warmup, daemon=True, name="rag-warmup")
-        t.start()
-
+        threading.Thread(target=_warmup, daemon=True, name="rag-warmup").start()

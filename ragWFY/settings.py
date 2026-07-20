@@ -7,15 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Load .env from project root (local). On Render/Railway, env vars come from the host.
 load_dotenv(BASE_DIR / ".env")
-
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 SECRET_KEY = os.getenv(
     "SECRET_KEY",
@@ -24,15 +17,18 @@ SECRET_KEY = os.getenv(
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes")
 
-# Comma-separated hosts, e.g. "ragchat-wfy.onrender.com,localhost"
-_raw_hosts = os.getenv(
-    "ALLOWED_HOSTS",
-    "localhost,127.0.0.1,ragchat-wfy-elj5.onrender.com,ragchat-wfy-1.onrender.com",
-)
-ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split(",") if h.strip()]
-
-
-# Application definition
+# On Render, accept any host so new service URLs (ragchat-wfy-2, etc.) always work.
+if os.getenv("RENDER") or os.getenv("ALLOW_ALL_HOSTS", "").lower() in ("1", "true", "yes"):
+    ALLOWED_HOSTS = ["*"]
+else:
+    _raw_hosts = os.getenv(
+        "ALLOWED_HOSTS",
+        "localhost,127.0.0.1,.onrender.com,"
+        "ragchat-wfy-2.onrender.com,"
+        "ragchat-wfy-elj5.onrender.com,"
+        "ragchat-wfy-1.onrender.com",
+    )
+    ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split(",") if h.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -76,20 +72,12 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "ragWFY.wsgi.application"
 
-
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
     }
 }
-
-
-# Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -98,18 +86,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
-
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -118,31 +98,55 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
+        # CompressedStaticFilesStorage (no manifest) — avoids 500 if a hash file is missing
         "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
-# Media files
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Login/Logout URLs
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "login"
 
-# CSRF trusted origins (comma-separated full origins)
 _raw_csrf = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
     "http://localhost:8000,http://127.0.0.1:8000,"
-    "https://ragchat-wfy-elj5.onrender.com,https://ragchat-wfy-1.onrender.com",
+    "https://ragchat-wfy-2.onrender.com,"
+    "https://ragchat-wfy-elj5.onrender.com,"
+    "https://ragchat-wfy-1.onrender.com",
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _raw_csrf.split(",") if o.strip()]
 
-# Behind Render / reverse proxies
+# Render injects the public URL — always trust it for CSRF
+_render_url = (os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+if _render_url and _render_url not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(_render_url)
+
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
+# Basic logging so Render logs show request/worker errors
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
