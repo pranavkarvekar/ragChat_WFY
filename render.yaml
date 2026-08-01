@@ -2,14 +2,12 @@ services:
   - type: web
     name: ragchat-wfy
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: chmod +x build.sh && ./build.sh
     startCommand: gunicorn ragWFY.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 180
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.8"
-      - key: TORCH_INDEX
-        value: "cpu"
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG
@@ -17,10 +15,12 @@ services:
       - key: ALLOWED_HOSTS
         value: ".onrender.com,localhost,127.0.0.1"
       - key: CSRF_TRUSTED_ORIGINS
-        value: "https://ragchat-wfy.onrender.com,https://ragchat-wfy-elj5.onrender.com,https://ragchat-wfy-1.onrender.com"
+        value: "https://ragchat-wfy-2.onrender.com"
       - key: GROQ_API_KEY
         sync: false
       - key: MILVUS_DB_PATH
-        value: "./milvus_ragwfy.db"
+        sync: false    # Set to your Zilliz Cloud endpoint URL
+      - key: ZILLIZ_TOKEN
+        sync: false    # Set to your Zilliz Cloud API key
       - key: USER_AGENT
         value: "ragChat-WFY/1.0"

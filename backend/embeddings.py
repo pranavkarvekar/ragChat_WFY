@@ -1,11 +1,11 @@
 """
 embeddings.py
 =============
-Singleton model management for all AI models used in the RAG pipeline.
+Lightweight embedding engine using ONNX Runtime (no PyTorch needed).
 
-Models (all loaded lazily and cached as module-level singletons):
-  - Dense embedder  : sentence-transformers/all-MiniLM-L6-v2  (384-dim)
-  - Cross-encoder   : BAAI/bge-reranker-base                  (reranking)
+Replaces the original sentence-transformers + PyTorch stack (~400 MB RAM)
+with onnxruntime + tokenizers (~50 MB RAM) while producing identical
+384-dim embeddings from the same all-MiniLM-L6-v2 model.
 
 TF-IDF (sparse vectors)
   Each (user_id, source_id) pair has its own TfidfVectorizer fitted on the
@@ -18,35 +18,142 @@ produces BM25-like behaviour for sparse keyword retrieval.
 
 from __future__ import annotations
 
+import logging
 import pickle
 from pathlib import Path
 
-from sentence_transformers import CrossEncoder, SentenceTransformer
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
+
+logger = logging.getLogger(__name__)
 
 # bm25_models/ lives alongside manage.py (ragWFY/bm25_models/)
 _BM25_DIR = Path(__file__).resolve().parent.parent / "bm25_models"
 
+# ONNX model exported during build.sh (sentence-transformers/all-MiniLM-L6-v2)
+_ONNX_MODEL_DIR = Path(__file__).resolve().parent.parent / "onnx_model"
+
 # ── Lazy singletons ───────────────────────────────────────────────────────────
 
-_dense_model: SentenceTransformer | None = None
-_reranker: CrossEncoder | None = None
+_ort_session = None
+_tokenizer = None
 
 
-def get_dense_embedder() -> SentenceTransformer:
-    """Return the cached all-MiniLM-L6-v2 embedding model."""
+def _load_onnx_model() -> None:
+    """Load ONNX model and tokenizer lazily on first use."""
+    global _ort_session, _tokenizer
+    if _ort_session is not None:
+        return
+
+    import onnxruntime as ort
+    from tokenizers import Tokenizer
+
+    model_path = _ONNX_MODEL_DIR / "model.onnx"
+    tokenizer_path = _ONNX_MODEL_DIR / "tokenizer.json"
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"ONNX model not found at '{model_path}'. "
+            "Run `build.sh` or `optimum-cli export onnx --model "
+            "sentence-transformers/all-MiniLM-L6-v2 ./onnx_model/` first."
+        )
+
+    logger.info("Loading ONNX model from: %s", model_path)
+    _ort_session = ort.InferenceSession(
+        str(model_path),
+        providers=["CPUExecutionProvider"],
+    )
+
+    logger.info("Loading tokenizer from: %s", tokenizer_path)
+    _tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    _tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")
+    _tokenizer.enable_truncation(max_length=512)
+
+    logger.info("ONNX embedding model loaded successfully.")
+
+
+def _mean_pooling(
+    token_embeddings: np.ndarray,
+    attention_mask: np.ndarray,
+) -> np.ndarray:
+    """Apply mean pooling over token embeddings, respecting the attention mask."""
+    mask_expanded = np.expand_dims(attention_mask, axis=-1).astype(np.float32)
+    summed = np.sum(token_embeddings * mask_expanded, axis=1)
+    counts = np.clip(mask_expanded.sum(axis=1), a_min=1e-9, a_max=None)
+    return summed / counts
+
+
+def _l2_normalize(vectors: np.ndarray) -> np.ndarray:
+    """L2 normalize each row vector."""
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms = np.clip(norms, a_min=1e-9, a_max=None)
+    return vectors / norms
+
+
+class ONNXEmbedder:
+    """
+    Drop-in replacement for SentenceTransformer.
+
+    Exposes the same ``.encode()`` interface so all existing code
+    (rag_file.py, rag_web.py, rag_youtube.py) works without changes.
+    """
+
+    def encode(
+        self,
+        sentences,
+        normalize_embeddings: bool = True,
+        show_progress_bar: bool = False,
+        batch_size: int = 32,
+    ) -> np.ndarray:
+        _load_onnx_model()
+
+        if isinstance(sentences, str):
+            sentences = [sentences]
+
+        all_embeddings: list[np.ndarray] = []
+
+        for i in range(0, len(sentences), batch_size):
+            batch = sentences[i : i + batch_size]
+            encoded = _tokenizer.encode_batch(batch)
+
+            input_ids = np.array([e.ids for e in encoded], dtype=np.int64)
+            attention_mask = np.array(
+                [e.attention_mask for e in encoded], dtype=np.int64
+            )
+            token_type_ids = np.zeros_like(input_ids)
+
+            # Run ONNX inference
+            outputs = _ort_session.run(
+                None,
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "token_type_ids": token_type_ids,
+                },
+            )
+
+            # outputs[0] = last_hidden_state (batch, seq_len, 384)
+            embeddings = _mean_pooling(outputs[0], attention_mask)
+
+            if normalize_embeddings:
+                embeddings = _l2_normalize(embeddings)
+
+            all_embeddings.append(embeddings)
+
+        return np.vstack(all_embeddings)
+
+
+# ── Public interface (same function name as before) ───────────────────────────
+
+_dense_model: ONNXEmbedder | None = None
+
+
+def get_dense_embedder() -> ONNXEmbedder:
+    """Return the cached ONNX embedding model (same API as SentenceTransformer)."""
     global _dense_model
     if _dense_model is None:
-        _dense_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        _dense_model = ONNXEmbedder()
     return _dense_model
-
-
-def get_reranker() -> CrossEncoder:
-    """Return the cached BGE cross-encoder reranker model."""
-    global _reranker
-    if _reranker is None:
-        _reranker = CrossEncoder("BAAI/bge-reranker-base", device="cpu")
-    return _reranker
 
 
 # ── TF-IDF persistence ────────────────────────────────────────────────────────

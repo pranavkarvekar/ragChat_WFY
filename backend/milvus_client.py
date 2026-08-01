@@ -3,8 +3,11 @@ milvus_client.py
 ================
 Centralised Milvus connection, schema management, and search utilities.
 
-Uses Milvus Lite (file-based, no Docker) by default.  Set MILVUS_URI in .env
-to 'http://localhost:19530' to switch to a full Milvus server.
+Supports two modes:
+  - **Deployment (Zilliz Cloud)**: Set MILVUS_DB_PATH to a remote URL and
+    ZILLIZ_TOKEN for authentication.  No local server needed — 0 MB RAM.
+  - **Local dev (Milvus Lite)**: Set MILVUS_DB_PATH to a file path (default)
+    to start an embedded gRPC server.  Requires `pip install milvus-lite`.
 
 Collection schema
 -----------------
@@ -38,46 +41,48 @@ _client: MilvusClient | None = None
 
 # ── Connection ────────────────────────────────────────────────────────────────
 
-def _resolve_uri() -> str:
+def _resolve_connection() -> tuple[str, str]:
     """
-    Resolve the Milvus connection URI at call time (NOT at import time).
+    Resolve the Milvus connection URI and optional token at call time.
 
-    - If MILVUS_DB_PATH starts with 'http', treat it as a remote server URI.
-    - Otherwise start a Milvus Lite gRPC server and return its local URI.
-
-    We intentionally avoid calling load_dotenv() at module level so that
-    pymilvus does not see MILVUS_URI in os.environ during its own import
-    (pymilvus 3.0 reads os.environ['MILVUS_URI'] at import time and raises
-    ConnectionConfigException if it contains a file path).
+    Returns (uri, token) where:
+    - If MILVUS_DB_PATH starts with 'http', it's a remote server (Zilliz Cloud
+      or full Milvus).  ZILLIZ_TOKEN is used for authentication.
+    - Otherwise, start a local Milvus Lite gRPC server and return its URI.
     """
     from dotenv import load_dotenv
-    load_dotenv()  # safe here — pymilvus is already fully imported by now
+    load_dotenv()
 
     raw = os.getenv("MILVUS_DB_PATH", "./milvus_ragwfy.db")
+    token = os.getenv("ZILLIZ_TOKEN", "")
 
     if raw.startswith("http"):
-        return raw   # Remote / full Milvus server — use as-is
+        return raw, token    # Remote Zilliz Cloud or full Milvus server
 
-    # Resolve to absolute path relative to the Django project root
+    # ── Local development: use milvus-lite ────────────────────────────────
     db_path = Path(__file__).resolve().parent.parent / Path(raw).name
     abs_path = str(db_path)
 
-    # milvus-lite 3.0: start embedded gRPC server, return http://127.0.0.1:PORT
-    # On Windows, a stale lock file from a crashed/killed process blocks startup.
-    # Safely remove it before calling start_and_get_uri().
+    # On Windows, a stale lock file from a crashed process blocks startup.
     lock_file = Path(abs_path) / "data.lock"
     if lock_file.exists():
         try:
             lock_file.unlink()
         except OSError:
-            pass  # another live process may hold it — let Milvus raise naturally
+            pass
 
     try:
         # pyrefly: ignore [missing-import]
         from milvus_lite.server_manager import server_manager_instance
         uri = server_manager_instance.start_and_get_uri(abs_path)
         if uri:
-            return uri
+            return uri, ""
+    except ImportError:
+        raise RuntimeError(
+            "milvus-lite is not installed.  For local development, install it "
+            "with `pip install milvus-lite`.  For deployment, set MILVUS_DB_PATH "
+            "to your Zilliz Cloud endpoint URL."
+        )
     except Exception as e:
         raise RuntimeError(
             f"Failed to start Milvus Lite server for '{abs_path}': {e}"
@@ -93,8 +98,11 @@ def get_client() -> MilvusClient:
     """Return (and lazily initialise) the singleton Milvus client."""
     global _client
     if _client is None:
-        uri = _resolve_uri()
-        _client = MilvusClient(uri=uri)
+        uri, token = _resolve_connection()
+        kwargs: dict = {"uri": uri}
+        if token:
+            kwargs["token"] = token
+        _client = MilvusClient(**kwargs)
         _ensure_collection(_client)
     return _client
 

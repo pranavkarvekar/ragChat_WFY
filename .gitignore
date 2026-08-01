@@ -27,6 +27,9 @@ milvus_ragwfy.db/
 # TF-IDF/BM25 model cache (auto-generated, do not commit)
 bm25_models/
 
+# ONNX model (auto-generated during build, do not commit)
+onnx_model/
+
 # Django static/media collected files
 staticfiles/
 media/

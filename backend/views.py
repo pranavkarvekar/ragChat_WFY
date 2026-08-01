@@ -91,8 +91,7 @@ def _set_status(user_id: str, source_id: str, status: str, progress: str = "", e
 
 
 def _bg_ingest_file(file_path: str, user_id: str, source_id: str):
-    # pyrefly: ignore [missing-import]
-    from rag_file import _ingest_file
+    from .rag_file import _ingest_file
     
     def cb(progress_msg):
         _set_status(user_id, source_id, "processing", progress_msg)
@@ -113,8 +112,7 @@ def _bg_ingest_file(file_path: str, user_id: str, source_id: str):
 
 
 def _bg_ingest_url(url: str, user_id: str, source_id: str):
-    # pyrefly: ignore [missing-import]
-    from rag_web import _ingest_url
+    from .rag_web import _ingest_url
     
     def cb(progress_msg):
         _set_status(user_id, source_id, "processing", progress_msg)
@@ -129,8 +127,7 @@ def _bg_ingest_url(url: str, user_id: str, source_id: str):
 
 
 def _bg_ingest_youtube(url: str, user_id: str, source_id: str):
-    # pyrefly: ignore [missing-import]
-    from rag_youtube import _ingest_youtube
+    from .rag_youtube import _ingest_youtube
     
     def cb(progress_msg):
         _set_status(user_id, source_id, "processing", progress_msg)
