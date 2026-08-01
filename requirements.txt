@@ -15,5 +15,5 @@ Pillow==10.4.0
 numpy==1.26.4
 
 # Lightweight embeddings (replaces sentence-transformers + PyTorch)
-onnxruntime==1.17.1
-tokenizers==0.21.0
+onnxruntime>=1.17.0
+tokenizers>=0.20.0
