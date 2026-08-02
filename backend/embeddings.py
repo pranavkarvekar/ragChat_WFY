@@ -39,8 +39,20 @@ _ort_session = None
 _tokenizer = None
 
 
+def _download_file_if_missing(url: str, dest_path: Path) -> None:
+    if dest_path.exists():
+        return
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Downloading missing model file from %s...", url)
+    import urllib.request
+    import shutil
+    with urllib.request.urlopen(url) as response, open(dest_path, "wb") as out_file:
+        shutil.copyfileobj(response, out_file)
+    logger.info("Downloaded successfully to %s", dest_path)
+
+
 def _load_onnx_model() -> None:
-    """Load ONNX model and tokenizer lazily on first use."""
+    """Load ONNX model and tokenizer lazily on first use (auto-downloading if missing)."""
     global _ort_session, _tokenizer
     if _ort_session is not None:
         return
@@ -51,11 +63,16 @@ def _load_onnx_model() -> None:
     model_path = _ONNX_MODEL_DIR / "model.onnx"
     tokenizer_path = _ONNX_MODEL_DIR / "tokenizer.json"
 
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"ONNX model not found at '{model_path}'. "
-            "Run `build.sh` or `optimum-cli export onnx --model "
-            "sentence-transformers/all-MiniLM-L6-v2 ./onnx_model/` first."
+    if not model_path.exists() or not tokenizer_path.exists():
+        logger.info("ONNX model files missing on disk. Auto-downloading from Hugging Face Hub...")
+        _ONNX_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        _download_file_if_missing(
+            "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx",
+            model_path,
+        )
+        _download_file_if_missing(
+            "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+            tokenizer_path,
         )
 
     logger.info("Loading ONNX model from: %s", model_path)
