@@ -102,33 +102,54 @@ def _extract_video_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 def _fetch_transcript_fast(url: str) -> str | None:
-    """Try to fetch captions quickly without downloading audio. Returns text or None."""
+    """Try to fetch captions quickly without downloading audio. Returns text or None.
+    
+    Uses youtube-transcript-api >= 0.6.2 instance-based API.
+    Snippets are FetchedTranscriptSnippet objects with .text attribute.
+    """
     if YouTubeTranscriptApi is None:
         return None
     video_id = _extract_video_id(url)
     if not video_id:
         return None
-    try:
-        # First try common English locale codes
+    
+    api = YouTubeTranscriptApi()
+    
+    # Strategy 1: try common English locale codes directly
+    for lang_codes in (
+        ["en", "en-US", "en-GB", "en-IN", "en-AU", "en-CA"],
+        ["a.en"],   # auto-generated English
+    ):
         try:
-            transcripts = YouTubeTranscriptApi.get_transcript(
-                video_id, languages=["en", "en-US", "en-GB", "en-IN", "a.en"]
-            )
+            fetched = api.fetch(video_id, languages=lang_codes)
+            text = " ".join(
+                getattr(s, "text", "") or s.get("text", "")
+                if isinstance(s, dict) else getattr(s, "text", "")
+                for s in fetched
+            ).strip()
+            if text:
+                return text
         except Exception:
-            # Fallback to listing transcripts and grabbing the first available
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript_obj = None
-            for t in transcript_list:
-                transcript_obj = t
-                break
-            if not transcript_obj:
-                return None
-            transcripts = transcript_obj.fetch()
-
-        text = " ".join([seg.get("text", "") for seg in transcripts if seg.get("text")])
-        return text.strip() or None
+            continue
+    
+    # Strategy 2: list all available transcripts, pick any and fetch
+    try:
+        transcript_list = api.list(video_id)
+        for transcript_obj in transcript_list:
+            try:
+                fetched = transcript_obj.fetch()
+                text = " ".join(
+                    s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
+                    for s in fetched
+                ).strip()
+                if text:
+                    return text
+            except Exception:
+                continue
     except Exception:
-        return None
+        pass
+    
+    return None
 
 def _ingest_youtube(url: str, user_id: str, source_id: str, status_cb=None) -> None:
     """Scrape captions or download audio, chunk, embed, and index YouTube video content into Milvus."""
