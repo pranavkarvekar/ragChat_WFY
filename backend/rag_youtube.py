@@ -22,7 +22,7 @@ from .embeddings import (
 # pyrefly: ignore [missing-import]
 from .milvus_client import hybrid_search as milvus_hybrid_search
 # pyrefly: ignore [missing-import]
-from .milvus_client import insert_chunks
+from .milvus_client import fetch_all_chunks, insert_chunks
 
 load_dotenv()
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -67,8 +67,18 @@ def download_youtube_audio_temp(url: str) -> str:
         "buffersize": 1024 * 16,
         "nocheckcertificate": True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as exc:
+        msg = str(exc)
+        if "Sign in to confirm" in msg or "bot" in msg.lower() or "cookies" in msg.lower():
+            raise RuntimeError(
+                "YouTube is blocking audio download from this server because it requires "
+                "browser sign-in verification. The video may not have English captions. "
+                "Please try a different YouTube video that has English captions enabled."
+            ) from exc
+        raise
     
     files = os.listdir(temp_dir)
     if not files:
@@ -188,7 +198,19 @@ def _retrieve_top_chunks(
         [question], normalize_embeddings=True, show_progress_bar=False
     )[0].tolist()
     
-    tfidf = load_tfidf(user_id, source_id)
+    try:
+        tfidf = load_tfidf(user_id, source_id)
+    except FileNotFoundError:
+        # bm25_models/ was wiped by Render's ephemeral FS — rebuild from Milvus chunks
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "TF-IDF pkl missing for YouTube source %s — rebuilding from Milvus chunks.", source_id
+        )
+        stored_chunks = fetch_all_chunks(user_id, source_id)
+        if not stored_chunks:
+            return milvus_hybrid_search(dense_q, {}, user_id, source_id, limit=top_k)
+        tfidf = fit_and_save_tfidf(stored_chunks, user_id, source_id)
+
     sparse_q = scipy_row_to_dict(tfidf.transform([question]).getrow(0))
     
     return milvus_hybrid_search(dense_q, sparse_q, user_id, source_id, limit=top_k)

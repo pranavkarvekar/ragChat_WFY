@@ -185,6 +185,40 @@ def insert_chunks(records: list[dict]) -> None:
     get_client().insert(collection_name=COLLECTION_NAME, data=records)
 
 
+def fetch_all_chunks(user_id: str, source_id: str, page_size: int = 500) -> list[str]:
+    """
+    Fetch ALL chunk_text strings stored for (user_id, source_id).
+
+    Used to rebuild a lost TF-IDF vectorizer from the chunks already in Milvus
+    when the bm25_models/ pkl file has been wiped (e.g. by Render's ephemeral FS).
+    """
+    client = get_client()
+    texts: list[str] = []
+    offset = 0
+    expr = f'user_id == "{user_id}" and source_id == "{source_id}"'
+    while True:
+        try:
+            rows = client.query(
+                collection_name=COLLECTION_NAME,
+                filter=expr,
+                output_fields=["chunk_text"],
+                limit=page_size,
+                offset=offset,
+            )
+        except Exception:
+            break
+        if not rows:
+            break
+        for row in rows:
+            text = row.get("chunk_text") or row.get("entity", {}).get("chunk_text", "")
+            if text:
+                texts.append(text)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return texts
+
+
 # ── Hybrid Search ─────────────────────────────────────────────────────────────
 
 def hybrid_search(

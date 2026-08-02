@@ -40,7 +40,7 @@ from .embeddings import (
     scipy_row_to_dict,
 )
 from .milvus_client import hybrid_search as milvus_hybrid_search
-from .milvus_client import insert_chunks, source_exists
+from .milvus_client import fetch_all_chunks, insert_chunks, source_exists
 
 load_dotenv()
 _groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -311,7 +311,19 @@ def _retrieve_top_chunks(
         [question], normalize_embeddings=True, show_progress_bar=False
     )[0].tolist()
 
-    vectorizer = load_tfidf(user_id, source_id)
+    try:
+        vectorizer = load_tfidf(user_id, source_id)
+    except FileNotFoundError:
+        # bm25_models/ was wiped by Render's ephemeral FS — rebuild from Milvus chunks
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "TF-IDF pkl missing for source %s — rebuilding from Milvus chunks.", source_id
+        )
+        stored_chunks = fetch_all_chunks(user_id, source_id)
+        if not stored_chunks:
+            return milvus_hybrid_search(dense_q, {}, user_id, source_id, limit=top_k)
+        vectorizer = fit_and_save_tfidf(stored_chunks, user_id, source_id)
+
     sparse_q = scipy_row_to_dict(vectorizer.transform([question]).getrow(0))
 
     return milvus_hybrid_search(dense_q, sparse_q, user_id, source_id, limit=top_k)
