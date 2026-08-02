@@ -15,7 +15,7 @@ SECRET_KEY = os.getenv(
     "django-insecure-^00*h4lb(js%$3e%4-tps6g&!-xbg@y(7nzjsc8m1lkwb&hm6p",
 )
 
-DEBUG = True # os.getenv("DEBUG", "True").lower() in ("1", "true", "yes")
+DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes")
 
 # On Render, accept any host so new service URLs (ragchat-wfy-2, etc.) always work.
 if os.getenv("RENDER") or os.getenv("ALLOW_ALL_HOSTS", "").lower() in ("1", "true", "yes"):

@@ -7,14 +7,12 @@ class BackendConfig(AppConfig):
 
     def ready(self) -> None:
         """
-        Model warmup on startup.
+        Optional model warmup. Disabled by default on Render/Gunicorn so the
+        worker stays alive and responsive (loading ML models on 0.1 vCPU in a
+        background thread starves Gunicorn and causes 500/timeout errors).
+        Models load lazily on the first RAG request instead.
 
-        Previously disabled because torch + Milvus Lite caused OOM on Render Free tier.
-        Now safe because we use ONNX Runtime (~50 MB) instead of PyTorch (~400 MB).
-
-        The ONNX model is loaded in a background thread so the worker
-        starts accepting requests immediately — warmup happens concurrently.
-        This eliminates the 2-5 minute first-request delay.
+        Set ENABLE_WARMUP=1 to turn boot warmup back on.
         """
         import os
         import sys
@@ -27,9 +25,12 @@ class BackendConfig(AppConfig):
         if "runserver" in sys.argv and os.environ.get("RUN_MAIN") != "true":
             return
 
+        # Skip on cloud/gunicorn unless explicitly enabled
+        if os.environ.get("ENABLE_WARMUP", "").lower() not in ("1", "true", "yes"):
+            return
+
         def _warmup() -> None:
             try:
-                # Always warm up ONNX embedder — only ~50 MB, safe on free tier
                 logger.info("Warmup: loading ONNX embedding model...")
                 from .embeddings import get_dense_embedder
                 get_dense_embedder()
@@ -40,7 +41,6 @@ class BackendConfig(AppConfig):
                 )
 
             try:
-                # Optionally warm up Milvus connection
                 if os.environ.get("ENABLE_MILVUS_WARMUP", "").lower() in ("1", "true", "yes"):
                     logger.info("Warmup: connecting to Milvus/Zilliz...")
                     from .milvus_client import get_client
