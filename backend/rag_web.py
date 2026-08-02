@@ -76,11 +76,11 @@ Answer:"""
 
 def _fetch_wikipedia(url: str) -> str:
     """
-    Fetch a Wikipedia article using the official REST API.
+    Fetch a Wikipedia article using the MediaWiki Action API.
 
     Wikipedia blocks server-side scraping (403) from cloud IPs even with
-    a real browser User-Agent.  The REST API is designed for programmatic
-    access and always works.
+    a real browser User-Agent.  The official REST API was also decommissioned.
+    The Action API is designed for programmatic access and always works.
 
     Supports:
       - https://en.wikipedia.org/wiki/TITLE
@@ -100,46 +100,37 @@ def _fetch_wikipedia(url: str) -> str:
     if lang_match:
         lang = lang_match.group(1)
 
-    # Use the Wikipedia REST API sections endpoint (full article content)
-    api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/mobile-sections/{title}"
+    # Use the reliable MediaWiki Action API
+    api_url = f"https://{lang}.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "prop": "extracts",
+        "explaintext": "1",  # return plain text, not HTML
+        "titles": title,
+        "format": "json"
+    }
+    
     headers = {
-        "User-Agent": "ragChat-WFY/1.0 (educational RAG project; contact via GitHub)",
-        "Accept": "application/json",
+        "User-Agent": "ragChat-WFY/1.0 (https://github.com/pranavkarvekar/ragChat_WFY)",
     }
 
-    resp = httpx.get(api_url, timeout=30, follow_redirects=True, headers=headers)
+    resp = httpx.get(api_url, params=params, timeout=30, follow_redirects=True, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 
-    # Concatenate all section text
-    parts: list[str] = []
-    lead = data.get("lead", {})
-    if lead.get("displaytitle"):
-        parts.append(f"# {lead['displaytitle']}\n")
-    for section in lead.get("sections", []):
-        text = section.get("text", "")
-        if text:
-            import html2text as _h2t
-            c = _h2t.HTML2Text()
-            c.ignore_links = True
-            c.ignore_images = True
-            c.body_width = 0
-            parts.append(c.handle(text))
+    # The API returns data in: {"query": {"pages": {"<page_id>": {"extract": "..."}}}}
+    pages = data.get("query", {}).get("pages", {})
+    if not pages or "-1" in pages:
+        raise ValueError(f"Wikipedia page not found for title: {title}")
+    
+    # Get the first page's extract
+    page = next(iter(pages.values()))
+    extract = page.get("extract", "")
+    
+    if not extract:
+        raise ValueError(f"No text content found for Wikipedia page: {title}")
 
-    for section in data.get("remaining", {}).get("sections", []):
-        title_text = section.get("line", "")
-        text = section.get("text", "")
-        if title_text:
-            parts.append(f"\n## {title_text}\n")
-        if text:
-            import html2text as _h2t
-            c = _h2t.HTML2Text()
-            c.ignore_links = True
-            c.ignore_images = True
-            c.body_width = 0
-            parts.append(c.handle(text))
-
-    return "\n".join(parts)
+    return f"# {page.get('title', title)}\n\n{extract}"
 
 
 def _scrape_url(url: str) -> str:
