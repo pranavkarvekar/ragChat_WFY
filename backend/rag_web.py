@@ -74,15 +74,90 @@ Answer:"""
 # 1. SCRAPING
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _fetch_wikipedia(url: str) -> str:
+    """
+    Fetch a Wikipedia article using the official REST API.
+
+    Wikipedia blocks server-side scraping (403) from cloud IPs even with
+    a real browser User-Agent.  The REST API is designed for programmatic
+    access and always works.
+
+    Supports:
+      - https://en.wikipedia.org/wiki/TITLE
+      - https://en.m.wikipedia.org/wiki/TITLE
+    """
+    import re as _re
+    import httpx
+
+    # Extract the article title from the URL
+    match = _re.search(r"/wiki/([^#?]+)", url)
+    if not match:
+        raise ValueError(f"Cannot extract Wikipedia article title from URL: {url}")
+
+    title = match.group(1)  # e.g. "Machine_learning"
+    lang = "en"
+    lang_match = _re.match(r"https?://([a-z]+)\.(?:m\.)?wikipedia", url)
+    if lang_match:
+        lang = lang_match.group(1)
+
+    # Use the Wikipedia REST API sections endpoint (full article content)
+    api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/mobile-sections/{title}"
+    headers = {
+        "User-Agent": "ragChat-WFY/1.0 (educational RAG project; contact via GitHub)",
+        "Accept": "application/json",
+    }
+
+    resp = httpx.get(api_url, timeout=30, follow_redirects=True, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
+
+    # Concatenate all section text
+    parts: list[str] = []
+    lead = data.get("lead", {})
+    if lead.get("displaytitle"):
+        parts.append(f"# {lead['displaytitle']}\n")
+    for section in lead.get("sections", []):
+        text = section.get("text", "")
+        if text:
+            import html2text as _h2t
+            c = _h2t.HTML2Text()
+            c.ignore_links = True
+            c.ignore_images = True
+            c.body_width = 0
+            parts.append(c.handle(text))
+
+    for section in data.get("remaining", {}).get("sections", []):
+        title_text = section.get("line", "")
+        text = section.get("text", "")
+        if title_text:
+            parts.append(f"\n## {title_text}\n")
+        if text:
+            import html2text as _h2t
+            c = _h2t.HTML2Text()
+            c.ignore_links = True
+            c.ignore_images = True
+            c.body_width = 0
+            parts.append(c.handle(text))
+
+    return "\n".join(parts)
+
+
 def _scrape_url(url: str) -> str:
     """
     Fetch a webpage and convert its HTML to clean Markdown.
 
     Uses httpx for the HTTP request and html2text for conversion.
     Simulates a real browser User-Agent to avoid simple bot blocks.
+
+    For Wikipedia URLs, uses the Wikipedia REST API to avoid 403 blocks
+    from cloud server IPs.
     """
     import html2text
     import httpx
+
+    # Route Wikipedia URLs through the REST API (never 403)
+    if "wikipedia.org/wiki/" in url:
+        return _fetch_wikipedia(url)
 
     headers = {
         "User-Agent": (
@@ -95,8 +170,22 @@ def _scrape_url(url: str) -> str:
         "Accept-Encoding": "gzip, deflate, br",
     }
 
-    response = httpx.get(url, timeout=30, follow_redirects=True, headers=headers)
-    response.raise_for_status()
+    try:
+        response = httpx.get(url, timeout=30, follow_redirects=True, headers=headers)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 403:
+            raise ValueError(
+                f"Access denied (403) for '{url}'. "
+                "This site blocks automated access. Try a different source."
+            ) from exc
+        elif status == 404:
+            raise ValueError(f"Page not found (404): '{url}'") from exc
+        else:
+            raise ValueError(
+                f"HTTP {status} error fetching '{url}': {exc}"
+            ) from exc
 
     converter = html2text.HTML2Text()
     converter.ignore_links   = True   # strip link URLs — reduces chunk noise
@@ -106,6 +195,7 @@ def _scrape_url(url: str) -> str:
     converter.single_line_break = False
 
     return converter.handle(response.text)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
