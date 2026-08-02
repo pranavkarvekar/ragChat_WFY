@@ -99,7 +99,22 @@ def _fetch_transcript_fast(url: str) -> str | None:
     if not video_id:
         return None
     try:
-        transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+        # First try common English locale codes
+        try:
+            transcripts = YouTubeTranscriptApi.get_transcript(
+                video_id, languages=["en", "en-US", "en-GB", "en-IN", "a.en"]
+            )
+        except Exception:
+            # Fallback to listing transcripts and grabbing the first available
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript_obj = None
+            for t in transcript_list:
+                transcript_obj = t
+                break
+            if not transcript_obj:
+                return None
+            transcripts = transcript_obj.fetch()
+
         text = " ".join([seg.get("text", "") for seg in transcripts if seg.get("text")])
         return text.strip() or None
     except Exception:
