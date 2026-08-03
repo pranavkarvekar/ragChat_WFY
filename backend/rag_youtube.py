@@ -28,6 +28,15 @@ from typing import Generator
 import yt_dlp
 from dotenv import load_dotenv
 from groq import Groq
+import logging
+
+logger = logging.getLogger(__name__)
+
+_CHROME_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/127.0.0.0 Safari/537.36"
+)
 
 # pyrefly: ignore [missing-import]
 try:
@@ -198,7 +207,13 @@ def _fetch_via_transcript_api(url: str) -> str | None:
             text = " ".join(_clean_snippet_text(s) for s in fetched).strip()
             if text:
                 return text
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Tier 1 (_fetch_via_transcript_api): fetch failed for video_id=%s (languages=%s): %s",
+                video_id,
+                lang_codes,
+                str(e),
+            )
             continue
 
     # Last resort: list every available transcript and grab the first one
@@ -209,10 +224,19 @@ def _fetch_via_transcript_api(url: str) -> str | None:
                 text = " ".join(_clean_snippet_text(s) for s in fetched).strip()
                 if text:
                     return text
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Tier 1 (_fetch_via_transcript_api): item fetch failed for video_id=%s: %s",
+                    video_id,
+                    str(e),
+                )
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "Tier 1 (_fetch_via_transcript_api): list() failed for video_id=%s: %s",
+            video_id,
+            str(e),
+        )
 
     return None
 
@@ -228,7 +252,7 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
     - yt-dlp is much better at bypassing YouTube bot-detection for metadata
     - The signed timedtext URL it returns is directly fetchable without IP checks
     - No audio/video download is ever triggered
-    - When WEBSHARE env vars are set, requests route through residential proxy
+    - Forces IPv4 routing and rotates resilient mobile/TV player clients
     """
     import httpx as _httpx
 
@@ -237,8 +261,8 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
-        # Try multiple player clients — tv_embedded bypasses datacenter IP/bot blocks without proxy
-        "extractor_args": {"youtube": {"player_client": ["tv_embedded", "ios", "web", "android"]}},
+        "source_address": "0.0.0.0",
+        "extractor_args": {"youtube": ["player_client=android,ios,tv_embedded"]},
     }
     if proxy_url:
         ydl_opts["proxy"] = proxy_url
@@ -246,7 +270,8 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception:
+    except Exception as e:
+        logger.warning("Tier 2 (_fetch_via_ytdlp_info): extract_info failed for URL %s: %s", url, str(e))
         return None
 
     # Prefer manual subtitles, then auto-generated
@@ -267,12 +292,37 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
             if not sub_url:
                 continue
             try:
-                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+                resp = _httpx.get(
+                    sub_url,
+                    timeout=20,
+                    follow_redirects=True,
+                    headers={"User-Agent": _CHROME_USER_AGENT},
+                )
                 if resp.status_code == 200:
                     text = _parse_vtt_srt(resp.text)
                     if text and len(text) > 30:
                         return text
-            except Exception:
+                elif resp.status_code == 403:
+                    logger.warning(
+                        "Tier 2 (_fetch_via_ytdlp_info): httpx got 403 Forbidden on direct URL download "
+                        "for URL %s (lang=%s). Will trigger Tier 3 fallback.",
+                        url,
+                        lang,
+                    )
+                else:
+                    logger.warning(
+                        "Tier 2 (_fetch_via_ytdlp_info): httpx get returned status %s for URL %s (lang=%s)",
+                        resp.status_code,
+                        url,
+                        lang,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Tier 2 (_fetch_via_ytdlp_info): httpx request failed for URL %s (lang=%s): %s",
+                    url,
+                    lang,
+                    str(e),
+                )
                 continue
 
         # Fallback: if no standard English code matched, try any available language in sub_dict
@@ -288,12 +338,37 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
             if not sub_url:
                 continue
             try:
-                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+                resp = _httpx.get(
+                    sub_url,
+                    timeout=20,
+                    follow_redirects=True,
+                    headers={"User-Agent": _CHROME_USER_AGENT},
+                )
                 if resp.status_code == 200:
                     text = _parse_vtt_srt(resp.text)
                     if text and len(text) > 30:
                         return text
-            except Exception:
+                elif resp.status_code == 403:
+                    logger.warning(
+                        "Tier 2 (_fetch_via_ytdlp_info): httpx got 403 Forbidden on direct URL download "
+                        "for URL %s (lang=%s). Will trigger Tier 3 fallback.",
+                        url,
+                        lang,
+                    )
+                else:
+                    logger.warning(
+                        "Tier 2 (_fetch_via_ytdlp_info): httpx get returned status %s for URL %s (lang=%s)",
+                        resp.status_code,
+                        url,
+                        lang,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Tier 2 (_fetch_via_ytdlp_info): httpx request failed for URL %s (lang=%s): %s",
+                    url,
+                    lang,
+                    str(e),
+                )
                 continue
 
     return None
@@ -304,7 +379,7 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
 def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
     """
     Download caption/subtitle files ONLY using yt-dlp (skip_download=True).
-    Last resort — routes through proxy if WEBSHARE env vars are set.
+    Last resort — forces IPv4 and rotates resilient mobile/TV player clients.
     """
     temp_dir = tempfile.mkdtemp()
     proxy_url = _get_proxy_url()
@@ -316,11 +391,12 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
             "subtitlesformat": "vtt/srt/best",
             "skip_download": True,
             "format": "none",
+            "source_address": "0.0.0.0",
             "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
-            "extractor_args": {"youtube": {"player_client": ["tv_embedded", "ios", "web", "android"]}},
+            "extractor_args": {"youtube": ["player_client=android,ios,tv_embedded"]},
         }
         if proxy_url:
             ydl_opts["proxy"] = proxy_url
@@ -336,8 +412,8 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
                 text = _parse_vtt_srt(content)
                 if text:
                     return text
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Tier 3 (_fetch_via_ytdlp_subtitles): yt-dlp download failed for URL %s: %s", url, str(e))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
     return None
@@ -349,21 +425,31 @@ def _ingest_youtube(url: str, user_id: str, source_id: str, status_cb=None) -> N
     """Fetch transcript (3 strategies), chunk, embed, and index into Milvus."""
 
     # Tier 1 — youtube-transcript-api (fast, works on residential IPs)
+    transcript = None
     if status_cb:
         status_cb("📺 Fetching video captions...")
-    transcript = _fetch_via_transcript_api(url)
+    try:
+        transcript = _fetch_via_transcript_api(url)
+    except Exception as e:
+        logger.warning("Tier 1 (_fetch_via_transcript_api) failed for URL %s: %s", url, str(e))
 
     # Tier 2 — yt-dlp extract_info → signed URL → httpx (cloud/datacenter IP proof)
     if not transcript:
         if status_cb:
             status_cb("🔗 Extracting caption track via video metadata...")
-        transcript = _fetch_via_ytdlp_info(url)
+        try:
+            transcript = _fetch_via_ytdlp_info(url)
+        except Exception as e:
+            logger.warning("Tier 2 (_fetch_via_ytdlp_info) failed for URL %s: %s", url, str(e))
 
     # Tier 3 — yt-dlp subtitle file download (last resort)
     if not transcript:
         if status_cb:
             status_cb("📝 Downloading subtitle file...")
-        transcript = _fetch_via_ytdlp_subtitles(url)
+        try:
+            transcript = _fetch_via_ytdlp_subtitles(url)
+        except Exception as e:
+            logger.warning("Tier 3 (_fetch_via_ytdlp_subtitles) failed for URL %s: %s", url, str(e))
 
     if not transcript or not transcript.strip():
         raise ValueError(
