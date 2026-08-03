@@ -237,8 +237,8 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
-        # Try multiple player clients — ios/web often work where android_vr is blocked
-        "extractor_args": {"youtube": {"player_client": ["ios", "web", "android", "web_creator"]}},
+        # Try multiple player clients — tv_embedded bypasses datacenter IP/bot blocks without proxy
+        "extractor_args": {"youtube": {"player_client": ["tv_embedded", "ios", "web", "android"]}},
     }
     if proxy_url:
         ydl_opts["proxy"] = proxy_url
@@ -300,7 +300,7 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
-            "extractor_args": {"youtube": {"player_client": ["ios", "web", "android"]}},
+            "extractor_args": {"youtube": {"player_client": ["tv_embedded", "ios", "web", "android"]}},
         }
         if proxy_url:
             ydl_opts["proxy"] = proxy_url
