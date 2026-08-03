@@ -32,8 +32,11 @@ from groq import Groq
 # pyrefly: ignore [missing-import]
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import WebshareProxyConfig, GenericProxyConfig
 except Exception:
     YouTubeTranscriptApi = None
+    WebshareProxyConfig = None
+    GenericProxyConfig = None
 
 # pyrefly: ignore [missing-import]
 from .embeddings import (
@@ -71,6 +74,47 @@ respond with exactly:
 Question: {question}
 
 Answer:"""
+
+
+# ── Proxy helpers (Webshare free-tier residential proxy) ───────────────────────
+
+def _get_proxy_url() -> str | None:
+    """
+    Return a Webshare proxy URL if WEBSHARE_PROXY_USERNAME and
+    WEBSHARE_PROXY_PASSWORD env vars are set, else None.
+
+    Sign up free at https://webshare.io — no credit card needed.
+    Add to Render env vars:
+      WEBSHARE_PROXY_USERNAME = <your-username>
+      WEBSHARE_PROXY_PASSWORD = <your-password>
+    """
+    user = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
+    pwd = os.getenv("WEBSHARE_PROXY_PASSWORD", "").strip()
+    if user and pwd:
+        return f"http://{user}:{pwd}@p.webshare.io:80/"
+    return None
+
+
+def _get_transcript_api():
+    """
+    Return a YouTubeTranscriptApi instance.
+    Uses WebshareProxyConfig when credentials are set (bypasses datacenter IP blocks).
+    """
+    if YouTubeTranscriptApi is None:
+        return None
+    user = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
+    pwd = os.getenv("WEBSHARE_PROXY_PASSWORD", "").strip()
+    if user and pwd and WebshareProxyConfig is not None:
+        try:
+            proxy_cfg = WebshareProxyConfig(
+                proxy_username=user,
+                proxy_password=pwd,
+                retries_when_blocked=3,
+            )
+            return YouTubeTranscriptApi(proxy_cfg)
+        except Exception:
+            pass
+    return YouTubeTranscriptApi()
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -133,14 +177,16 @@ def _parse_vtt_srt(content: str) -> str:
 # ── Tier 1: youtube-transcript-api (0.6.2 instance-based API) ─────────────────
 
 def _fetch_via_transcript_api(url: str) -> str | None:
-    """Fast caption fetch using youtube-transcript-api. Returns plain text or None."""
-    if YouTubeTranscriptApi is None:
+    """Fast caption fetch using youtube-transcript-api. Returns plain text or None.
+    
+    Uses proxy from _get_transcript_api() when WEBSHARE env vars are set.
+    """
+    api = _get_transcript_api()
+    if api is None:
         return None
     video_id = _extract_video_id(url)
     if not video_id:
         return None
-
-    api = YouTubeTranscriptApi()
 
     # Try English language codes (manual + auto-generated)
     for lang_codes in (
@@ -182,14 +228,21 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
     - yt-dlp is much better at bypassing YouTube bot-detection for metadata
     - The signed timedtext URL it returns is directly fetchable without IP checks
     - No audio/video download is ever triggered
+    - When WEBSHARE env vars are set, requests route through residential proxy
     """
     import httpx as _httpx
 
+    proxy_url = _get_proxy_url()
     ydl_opts = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
+        # Try multiple player clients — ios/web often work where android_vr is blocked
+        "extractor_args": {"youtube": {"player_client": ["ios", "web", "android", "web_creator"]}},
     }
+    if proxy_url:
+        ydl_opts["proxy"] = proxy_url
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -214,7 +267,8 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
             if not sub_url:
                 continue
             try:
-                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+                proxy_map = {"http://": proxy_url, "https://": proxy_url} if proxy_url else None
+                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True, proxies=proxy_map)
                 if resp.status_code == 200:
                     text = _parse_vtt_srt(resp.text)
                     if text and len(text) > 30:
@@ -230,9 +284,10 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
 def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
     """
     Download caption/subtitle files ONLY using yt-dlp (skip_download=True).
-    Last resort — may also be blocked on datacenter IPs but worth trying.
+    Last resort — routes through proxy if WEBSHARE env vars are set.
     """
     temp_dir = tempfile.mkdtemp()
+    proxy_url = _get_proxy_url()
     try:
         ydl_opts = {
             "writeautomaticsub": True,
@@ -245,7 +300,11 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
+            "extractor_args": {"youtube": {"player_client": ["ios", "web", "android"]}},
         }
+        if proxy_url:
+            ydl_opts["proxy"] = proxy_url
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
