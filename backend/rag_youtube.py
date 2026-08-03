@@ -251,7 +251,7 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
 
     # Prefer manual subtitles, then auto-generated
     for sub_dict in (info.get("subtitles", {}), info.get("automatic_captions", {})):
-        for lang in ("en", "en-US", "en-GB", "en-IN", "en-AU"):
+        for lang in ("en", "en-US", "en-GB", "en-IN", "en-AU", "en-CA", "en-orig", "a.en"):
             formats = sub_dict.get(lang, [])
             if not formats:
                 continue
@@ -267,8 +267,28 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
             if not sub_url:
                 continue
             try:
-                proxy_map = {"http://": proxy_url, "https://": proxy_url} if proxy_url else None
-                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True, proxies=proxy_map)
+                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+                if resp.status_code == 200:
+                    text = _parse_vtt_srt(resp.text)
+                    if text and len(text) > 30:
+                        return text
+            except Exception:
+                continue
+
+        # Fallback: if no standard English code matched, try any available language in sub_dict
+        for lang, formats in sub_dict.items():
+            if not formats:
+                continue
+            vtt_fmt = next((f for f in formats if f.get("ext") == "vtt"), None)
+            if not vtt_fmt and formats:
+                base_fmt = formats[0]
+                sub_url = base_fmt.get("url", "").replace("fmt=json3", "fmt=vtt")
+            else:
+                sub_url = (vtt_fmt or {}).get("url", "")
+            if not sub_url:
+                continue
+            try:
+                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
                 if resp.status_code == 200:
                     text = _parse_vtt_srt(resp.text)
                     if text and len(text) > 30:
