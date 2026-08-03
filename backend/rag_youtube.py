@@ -106,18 +106,28 @@ def _parse_vtt_srt(content: str) -> str:
         line = line.strip()
         if not line:
             continue
+        # Skip VTT header lines
         if line.startswith("WEBVTT") or line.startswith("NOTE"):
             continue
-        # Skip timestamp lines: "00:00:00.000 --> 00:00:05.000" or "1" (SRT counter)
+        # Skip VTT metadata key:value header lines (Kind: captions, Language: en)
+        if re.match(r"^[A-Za-z-]+:\s*\S", line) and "-->" not in line:
+            continue
+        # Skip timestamp lines: "00:00:00.000 --> 00:00:05.000"
         if re.match(r"[\d:.,]+ --> [\d:.,]+", line):
             continue
+        # Skip SRT sequence numbers
         if re.match(r"^\d+$", line):
             continue
         # Strip inline HTML/VTT tags like <c>, <00:00:01.000>
-        line = re.sub(r"<[^>]+>", "", line)
+        line = re.sub(r"<[^>]+>", "", line).strip()
         if line:
             text_parts.append(line)
-    return " ".join(text_parts).strip()
+    # Deduplicate consecutive identical lines (common in auto-generated captions)
+    deduped: list[str] = []
+    for part in text_parts:
+        if not deduped or deduped[-1] != part:
+            deduped.append(part)
+    return " ".join(deduped).strip()
 
 
 # ── Tier 1: youtube-transcript-api (0.6.2 instance-based API) ─────────────────
@@ -161,24 +171,76 @@ def _fetch_via_transcript_api(url: str) -> str | None:
     return None
 
 
-# ── Tier 2: yt-dlp subtitle-only download (NO audio, NO bot detection) ────────
+# ── Tier 2: yt-dlp extract_info → signed URL → httpx fetch (cloud-proof) ──────
+
+def _fetch_via_ytdlp_info(url: str) -> str | None:
+    """
+    Use yt-dlp extract_info() (metadata-only, no download) to obtain YouTube's
+    signed timedtext subtitle URLs, then fetch the VTT directly with httpx.
+
+    Why this works from Render's datacenter IPs:
+    - yt-dlp is much better at bypassing YouTube bot-detection for metadata
+    - The signed timedtext URL it returns is directly fetchable without IP checks
+    - No audio/video download is ever triggered
+    """
+    import httpx as _httpx
+
+    ydl_opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        return None
+
+    # Prefer manual subtitles, then auto-generated
+    for sub_dict in (info.get("subtitles", {}), info.get("automatic_captions", {})):
+        for lang in ("en", "en-US", "en-GB", "en-IN", "en-AU"):
+            formats = sub_dict.get(lang, [])
+            if not formats:
+                continue
+            # Prefer VTT, fallback to json3 (we can request VTT via URL param)
+            vtt_fmt = next((f for f in formats if f.get("ext") == "vtt"), None)
+            if not vtt_fmt and formats:
+                # Try converting json3 URL to VTT by swapping the fmt param
+                base_fmt = formats[0]
+                sub_url = base_fmt.get("url", "").replace("fmt=json3", "fmt=vtt")
+            else:
+                sub_url = (vtt_fmt or {}).get("url", "")
+
+            if not sub_url:
+                continue
+            try:
+                resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+                if resp.status_code == 200:
+                    text = _parse_vtt_srt(resp.text)
+                    if text and len(text) > 30:
+                        return text
+            except Exception:
+                continue
+
+    return None
+
+
+# ── Tier 3: yt-dlp subtitle-only file download (last resort) ──────────────────
 
 def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
     """
     Download caption/subtitle files ONLY using yt-dlp (skip_download=True).
-    
-    This is far lighter than audio download and rarely blocked because it's
-    just fetching a small text file — not triggering YouTube's streaming limits.
-    Returns plain text or None.
+    Last resort — may also be blocked on datacenter IPs but worth trying.
     """
     temp_dir = tempfile.mkdtemp()
     try:
         ydl_opts = {
-            "writeautomaticsub": True,     # auto-generated captions
-            "writesubtitles": True,         # manual captions
+            "writeautomaticsub": True,
+            "writesubtitles": True,
             "subtitleslangs": ["en", "en-US", "en-GB", "en-IN", "a.en"],
             "subtitlesformat": "vtt/srt/best",
-            "skip_download": True,          # ← KEY: never download video/audio
+            "skip_download": True,
+            "format": "none",
             "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
@@ -187,7 +249,6 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        # Find the downloaded subtitle file
         for fname in os.listdir(temp_dir):
             if fname.endswith((".vtt", ".srt", ".ttml", ".srv1", ".srv2", ".srv3")):
                 fpath = os.path.join(temp_dir, fname)
@@ -206,17 +267,23 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
 # ── Master ingestion pipeline ──────────────────────────────────────────────────
 
 def _ingest_youtube(url: str, user_id: str, source_id: str, status_cb=None) -> None:
-    """Fetch transcript (2 strategies), chunk, embed, and index into Milvus."""
+    """Fetch transcript (3 strategies), chunk, embed, and index into Milvus."""
 
-    # Tier 1 — youtube-transcript-api
+    # Tier 1 — youtube-transcript-api (fast, works on residential IPs)
     if status_cb:
         status_cb("📺 Fetching video captions...")
     transcript = _fetch_via_transcript_api(url)
 
-    # Tier 2 — yt-dlp subtitle-only (no audio download)
+    # Tier 2 — yt-dlp extract_info → signed URL → httpx (cloud/datacenter IP proof)
     if not transcript:
         if status_cb:
-            status_cb("📝 Downloading subtitle file (no audio)...")
+            status_cb("🔗 Extracting caption track via video metadata...")
+        transcript = _fetch_via_ytdlp_info(url)
+
+    # Tier 3 — yt-dlp subtitle file download (last resort)
+    if not transcript:
+        if status_cb:
+            status_cb("📝 Downloading subtitle file...")
         transcript = _fetch_via_ytdlp_subtitles(url)
 
     if not transcript or not transcript.strip():
