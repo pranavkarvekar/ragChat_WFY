@@ -261,8 +261,9 @@ def _fetch_via_ytdlp_info(url: str) -> str | None:
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
-        "source_address": "0.0.0.0",
-        "extractor_args": {"youtube": ["player_client=android,ios,tv_embedded"]},
+        "force_ipv4": True,
+        # Put tv_embedded and web_embedded first — they bypass datacenter IP/bot blocks without proxy
+        "extractor_args": {"youtube": {"player_client": ["tv_embedded", "web_embedded", "web", "ios", "android"]}},
     }
     if proxy_url:
         ydl_opts["proxy"] = proxy_url
@@ -391,12 +392,12 @@ def _fetch_via_ytdlp_subtitles(url: str) -> str | None:
             "subtitlesformat": "vtt/srt/best",
             "skip_download": True,
             "format": "none",
-            "source_address": "0.0.0.0",
+            "force_ipv4": True,
             "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": True,
-            "extractor_args": {"youtube": ["player_client=android,ios,tv_embedded"]},
+            "extractor_args": {"youtube": {"player_client": ["tv_embedded", "web_embedded", "web", "ios", "android"]}},
         }
         if proxy_url:
             ydl_opts["proxy"] = proxy_url
