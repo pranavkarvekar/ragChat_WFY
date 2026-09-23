@@ -587,7 +587,7 @@ def query_youtube_stream(
         yield from _status("💬 Generating answer...")
 
         stream = groq_client.chat.completions.create(
-            model="meta-llama/llama-4-maverick-17b-128e-instruct",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             temperature=0.1,

@@ -272,7 +272,7 @@ def query_chat_stream(
             prompt = _STRICT_QA_PROMPT.format(context=context_str, question=question)
 
         stream = _groq.chat.completions.create(
-            model="meta-llama/llama-4-maverick-17b-128e-instruct",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             temperature=0.2 if is_synthesis else 0.1,
