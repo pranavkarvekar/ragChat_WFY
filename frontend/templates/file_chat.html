@@ -171,7 +171,38 @@
         function getFileIconClass(f) { const e = getFileExtension(f).toLowerCase(); if (e==='pdf') return 'pdf-icon'; if (['doc','docx'].includes(e)) return 'doc-icon'; if (['txt','md','rtf'].includes(e)) return 'txt-icon'; return 'default-icon'; }
         function getFileTypeDisplay(f) { const e = getFileExtension(f).toLowerCase(); if (e==='pdf') return 'PDF'; if (['doc','docx'].includes(e)) return 'DOC'; if (['txt','md','rtf'].includes(e)) return 'TXT'; return e.toUpperCase(); }
         function formatFileSize(b) { if (!b) return '0 B'; const k=1024, s=['B','KB','MB','GB'], i=Math.floor(Math.log(b)/Math.log(k)); return parseFloat((b/Math.pow(k,i)).toFixed(1))+' '+s[i]; }
-        function handleFiles(files) { Array.from(files).forEach(f => { if (!uploadedFiles.find(x => x.name===f.name && x.size===f.size)) uploadedFiles.push(f); }); displayUploadedFiles(); updateFilesInfo(); }
+        /* ── File size limit ── */
+        const MAX_FILE_MB = 30;
+        const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+
+        function showFileSizeError(filename, sizeMB) {
+            // Remove any existing error banner first
+            const existing = document.getElementById('fileSizeError');
+            if (existing) existing.remove();
+            const banner = document.createElement('div');
+            banner.id = 'fileSizeError';
+            banner.style.cssText = 'background:#ff4d4d;color:#fff;padding:10px 16px;border-radius:8px;margin:8px 0;font-size:0.88rem;display:flex;align-items:center;gap:8px;';
+            banner.innerHTML = `<span>⚠️</span><span><strong>${filename}</strong> is ${sizeMB} MB — exceeds the ${MAX_FILE_MB} MB limit. Please upload a smaller file.</span>`;
+            const uploadArea = document.getElementById('uploadedFiles');
+            uploadArea.parentNode.insertBefore(banner, uploadArea);
+            setTimeout(() => { if (banner.parentNode) banner.remove(); }, 5000);
+        }
+
+        function handleFiles(files) {
+            Array.from(files).forEach(f => {
+                /* ── Size check (frontend guard) ── */
+                if (f.size > MAX_FILE_BYTES) {
+                    const sizeMB = (f.size / (1024 * 1024)).toFixed(1);
+                    showFileSizeError(f.name, sizeMB);
+                    return;  // skip this file, don't add it
+                }
+                if (!uploadedFiles.find(x => x.name === f.name && x.size === f.size)) {
+                    uploadedFiles.push(f);
+                }
+            });
+            displayUploadedFiles();
+            updateFilesInfo();
+        }
         function displayUploadedFiles() { const c = document.getElementById('uploadedFiles'); c.innerHTML = ''; uploadedFiles.forEach((f,i) => { const item = document.createElement('div'); item.className='file-item'; item.innerHTML=`<div class="file-icon-type ${getFileIconClass(f.name)}">${getFileTypeDisplay(f.name)}</div><div class="file-details"><div class="file-name">${f.name}</div><div class="file-info">${formatFileSize(f.size)}</div></div><button class="remove-file" onclick="removeFile(${i})" title="Remove">×</button>`; c.appendChild(item); }); }
         function removeFile(i) { uploadedFiles.splice(i,1); displayUploadedFiles(); updateFilesInfo(); }
         function updateFilesInfo() { const fi=document.getElementById('filesInfo'), fs=document.getElementById('filesSummary'); if (uploadedFiles.length) { fs.innerHTML=`${uploadedFiles.length} file(s) • ${formatFileSize(uploadedFiles.reduce((s,f)=>s+f.size,0))} total`; fi.classList.add('show'); } else fi.classList.remove('show'); }

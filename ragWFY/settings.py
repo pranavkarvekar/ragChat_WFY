@@ -108,6 +108,13 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# ── File upload size limits ───────────────────────────────────────────────────
+# Frontend JS also enforces 30 MB — this is the backend safety net.
+# Catches users who bypass JS validation (e.g., curl, Postman, DevTools).
+_MAX_UPLOAD_MB = 30
+DATA_UPLOAD_MAX_MEMORY_SIZE = _MAX_UPLOAD_MB * 1024 * 1024   # 30 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = _MAX_UPLOAD_MB * 1024 * 1024   # 30 MB
+
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "login"
