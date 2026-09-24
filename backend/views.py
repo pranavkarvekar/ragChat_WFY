@@ -3,8 +3,10 @@ views.py
 ========
 Django API views for the RAG platform.
 
-Ingestion of files and URLs happens synchronously.
-The upload/ingest endpoints block until ingestion is complete and return JSON.
+Ingestion of files and URLs streams SSE progress events synchronously.
+The upload/ingest endpoints return a StreamingHttpResponse (text/event-stream)
+so the browser receives real-time progress and a final {status:ready} event
+without any polling.
 
 Once ready, chat queries stream LLM tokens via a unified SSE chat endpoint.
 """
@@ -302,7 +304,7 @@ def api_web_chat(request):
     """
     POST /api/web/
     Form fields: url (str)
-    Returns: JSON {status: ready, source_id: ...}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     url = request.POST.get("url", "").strip()
     if not url:
@@ -311,16 +313,23 @@ def api_web_chat(request):
     user_uid = _user_id(request)
     source_id = _compute_web_source_id(url)
 
-    if source_exists(user_uid, source_id):
-        return JsonResponse({"status": "ready", "source_id": source_id})
+    def _stream():
+        try:
+            if source_exists(user_uid, source_id):
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
 
-    from .rag_web import _ingest_url  # noqa: PLC0415
-    try:
-        _ingest_url(url, user_uid, source_id)
-        return JsonResponse({"status": "ready", "source_id": source_id})
-    except Exception as exc:
-        logger.exception("Web ingestion failed for url: %s", url)
-        return JsonResponse({"error": str(exc)}, status=500)
+            from .rag_web import _ingest_url  # noqa: PLC0415
+            yield _sse({"type": "status", "message": "🌐 Scraping webpage..."})
+            yield _sse({"type": "status", "message": "✂️ Chunking content..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            _ingest_url(url, user_uid, source_id)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("Web ingestion failed for url: %s", url)
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return _sse_response(_stream())
 
 
 @csrf_exempt
@@ -329,7 +338,7 @@ def api_file_chat(request):
     """
     POST /api/files/
     Form fields: file (multipart upload)
-    Returns: JSON {status: ready, source_id: ...}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     upload = request.FILES.get("file")
     if not upload:
@@ -355,26 +364,40 @@ def api_file_chat(request):
 
     user_uid = _user_id(request)
 
-    if source_exists(user_uid, source_id):
+    def _stream():
         try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-        return JsonResponse({"status": "ready", "source_id": source_id})
+            # Cache hit — already indexed
+            if source_exists(user_uid, source_id):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
 
-    from .rag_file import _ingest_file  # noqa: PLC0415
-    try:
-        _ingest_file(tmp.name, user_uid, source_id, status_cb=lambda msg: None)
-        return JsonResponse({"status": "ready", "source_id": source_id})
-    except Exception as exc:
-        logger.exception("File ingestion failed for source_id: %s", source_id)
-        return JsonResponse({"error": str(exc)}, status=500)
-    finally:
-        try:
-            if os.path.exists(tmp.name):
-                os.unlink(tmp.name)
-        except OSError:
-            pass
+            from .rag_file import _ingest_file  # noqa: PLC0415
+
+            def cb(msg):
+                pass  # status messages handled by SSE steps below
+
+            yield _sse({"type": "status", "message": "📄 Reading file..."})
+            yield _sse({"type": "status", "message": "✂️ Splitting into chunks..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            yield _sse({"type": "status", "message": "💾 Indexing into vector store..."})
+
+            _ingest_file(tmp.name, user_uid, source_id, status_cb=cb)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("File ingestion failed for source_id: %s", source_id)
+            yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            try:
+                if os.path.exists(tmp.name):
+                    os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    return _sse_response(_stream())
 
 
 @csrf_exempt
@@ -434,7 +457,7 @@ def api_youtube_chat(request):
     """
     POST /api/youtube/
     Form fields: url (str)
-    Returns: JSON {status: ready, source_id: ...}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     url = request.POST.get("url", "").strip()
     if not url:
@@ -443,13 +466,20 @@ def api_youtube_chat(request):
     user_uid = _user_id(request)
     source_id = _compute_youtube_source_id(url)
 
-    if source_exists(user_uid, source_id):
-        return JsonResponse({"status": "ready", "source_id": source_id})
+    def _stream():
+        try:
+            if source_exists(user_uid, source_id):
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
 
-    from .rag_youtube import _ingest_youtube  # noqa: PLC0415
-    try:
-        _ingest_youtube(url, user_uid, source_id)
-        return JsonResponse({"status": "ready", "source_id": source_id})
-    except Exception as exc:
-        logger.exception("YouTube ingestion failed for url: %s", url)
-        return JsonResponse({"error": str(exc)}, status=500)
+            from .rag_youtube import _ingest_youtube  # noqa: PLC0415
+            yield _sse({"type": "status", "message": "📺 Fetching video captions..."})
+            yield _sse({"type": "status", "message": "✂️ Chunking transcript..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            _ingest_youtube(url, user_uid, source_id)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("YouTube ingestion failed for url: %s", url)
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return _sse_response(_stream())
