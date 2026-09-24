@@ -2,6 +2,14 @@ import os
 import subprocess
 import sys
 
+try:
+    import spaces
+    @spaces.GPU
+    def _dummy():
+        pass
+except ImportError:
+    pass
+
 def main():
     print("Starting Django server on port 7860...")
     

@@ -32,4 +32,4 @@ RUN python manage.py collectstatic --noinput
 EXPOSE 7860
 
 # Start Gunicorn on port 7860
-CMD python manage.py migrate && gunicorn ragWFY.wsgi:application --bind 0.0.0.0:7860 --workers 1 --threads 4 --timeout 120
+CMD ["gunicorn", "ragWFY.wsgi:application", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "4", "--timeout", "120"]
