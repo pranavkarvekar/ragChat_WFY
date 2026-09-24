@@ -314,12 +314,12 @@ def api_web_chat(request):
     source_id = _compute_web_source_id(url)
 
     def _stream():
-        if source_exists(user_uid, source_id):
-            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
-            return
-
-        from .rag_web import _ingest_url
         try:
+            if source_exists(user_uid, source_id):
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
+
+            from .rag_web import _ingest_url  # noqa: PLC0415
             yield _sse({"type": "status", "message": "🌐 Scraping webpage..."})
             yield _sse({"type": "status", "message": "✂️ Chunking content..."})
             yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
@@ -365,28 +365,25 @@ def api_file_chat(request):
     user_uid = _user_id(request)
 
     def _stream():
-        # Cache hit — already indexed
-        if source_exists(user_uid, source_id):
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
-            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
-            return
-
-        from .rag_file import _ingest_file  # import here to keep startup fast
         try:
-            def cb(msg):
-                pass  # progress sent via SSE below
+            # Cache hit — already indexed
+            if source_exists(user_uid, source_id):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
 
-            # Stream progress steps
-            for step in [
-                "📄 Reading file...",
-                "✂️ Splitting into chunks...",
-                "🧠 Building embeddings...",
-                "💾 Indexing into vector store...",
-            ]:
-                yield _sse({"type": "status", "message": step})
+            from .rag_file import _ingest_file  # noqa: PLC0415
+
+            def cb(msg):
+                pass  # status messages handled by SSE steps below
+
+            yield _sse({"type": "status", "message": "📄 Reading file..."})
+            yield _sse({"type": "status", "message": "✂️ Splitting into chunks..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            yield _sse({"type": "status", "message": "💾 Indexing into vector store..."})
 
             _ingest_file(tmp.name, user_uid, source_id, status_cb=cb)
             yield _sse({"type": "done", "status": "ready", "source_id": source_id})
@@ -447,12 +444,9 @@ def api_chat(request):
 
     user_uid = _user_id(request)
     
-    # Confirm ready
+    # Confirm source was indexed
     if not source_exists(user_uid, source_id):
-        status_info = _get_status(user_uid, source_id)
-        if status_info and status_info["status"] == "failed":
-            return JsonResponse({"error": f"Ingestion failed: {status_info['error']}"}, status=400)
-        return JsonResponse({"error": "Document is still indexing. Please wait."}, status=400)
+        return JsonResponse({"error": "Document is not yet indexed. Please upload it first."}, status=400)
 
     return _sse_response(query_chat_stream(source_id, question, user_uid, source_type))
 
@@ -473,12 +467,12 @@ def api_youtube_chat(request):
     source_id = _compute_youtube_source_id(url)
 
     def _stream():
-        if source_exists(user_uid, source_id):
-            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
-            return
-
-        from .rag_youtube import _ingest_youtube
         try:
+            if source_exists(user_uid, source_id):
+                yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+                return
+
+            from .rag_youtube import _ingest_youtube  # noqa: PLC0415
             yield _sse({"type": "status", "message": "📺 Fetching video captions..."})
             yield _sse({"type": "status", "message": "✂️ Chunking transcript..."})
             yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
