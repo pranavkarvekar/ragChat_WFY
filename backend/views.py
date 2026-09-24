@@ -3,9 +3,10 @@ views.py
 ========
 Django API views for the RAG platform.
 
-Ingestion of files and URLs now happens asynchronously in background threads.
-HTTP requests immediately return a 202 Accepted status with a unique source_id,
-and the frontend polls the status endpoint to monitor ingestion progress.
+Ingestion of files and URLs streams SSE progress events synchronously.
+The upload/ingest endpoints return a StreamingHttpResponse (text/event-stream)
+so the browser receives real-time progress and a final {status:ready} event
+without any polling.
 
 Once ready, chat queries stream LLM tokens via a unified SSE chat endpoint.
 """
@@ -303,7 +304,7 @@ def api_web_chat(request):
     """
     POST /api/web/
     Form fields: url (str)
-    Returns: JSON {status, source_id}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     url = request.POST.get("url", "").strip()
     if not url:
@@ -312,21 +313,23 @@ def api_web_chat(request):
     user_uid = _user_id(request)
     source_id = _compute_web_source_id(url)
 
-    # Cache hit
-    if source_exists(user_uid, source_id):
-        _set_status(user_uid, source_id, "ready")
-        return JsonResponse({"status": "ready", "source_id": source_id})
+    def _stream():
+        if source_exists(user_uid, source_id):
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+            return
 
-    # Already processing check
-    status_info = _get_status(user_uid, source_id)
-    if status_info and status_info["status"] in ("processing", "ready"):
-        return JsonResponse({"status": status_info["status"], "source_id": source_id})
+        from .rag_web import _ingest_url
+        try:
+            yield _sse({"type": "status", "message": "🌐 Scraping webpage..."})
+            yield _sse({"type": "status", "message": "✂️ Chunking content..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            _ingest_url(url, user_uid, source_id)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("Web ingestion failed for url: %s", url)
+            yield _sse({"type": "error", "message": str(exc)})
 
-    # Start ingestion
-    _set_status(user_uid, source_id, "processing", "🌐 Scraping webpage...")
-    INGESTION_EXECUTOR.submit(_bg_ingest_url, url, user_uid, source_id)
-    
-    return JsonResponse({"status": "processing", "source_id": source_id}, status=202)
+    return _sse_response(_stream())
 
 
 @csrf_exempt
@@ -335,13 +338,13 @@ def api_file_chat(request):
     """
     POST /api/files/
     Form fields: file (multipart upload)
-    Returns: JSON {status, source_id}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     upload = request.FILES.get("file")
     if not upload:
         return JsonResponse({"error": "'file' (upload) is required."}, status=400)
 
-    # Save to a temporary file to compute SHA256 and process
+    # Save to a temporary file to compute SHA256
     suffix = os.path.splitext(upload.name)[1]
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
@@ -361,29 +364,43 @@ def api_file_chat(request):
 
     user_uid = _user_id(request)
 
-    # Cache hit
-    if source_exists(user_uid, source_id):
+    def _stream():
+        # Cache hit — already indexed
+        if source_exists(user_uid, source_id):
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+            return
+
+        from .rag_file import _ingest_file  # import here to keep startup fast
         try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-        _set_status(user_uid, source_id, "ready")
-        return JsonResponse({"status": "ready", "source_id": source_id})
+            def cb(msg):
+                pass  # progress sent via SSE below
 
-    # Already processing check
-    status_info = _get_status(user_uid, source_id)
-    if status_info and status_info["status"] in ("processing", "ready"):
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-        return JsonResponse({"status": status_info["status"], "source_id": source_id})
+            # Stream progress steps
+            for step in [
+                "📄 Reading file...",
+                "✂️ Splitting into chunks...",
+                "🧠 Building embeddings...",
+                "💾 Indexing into vector store...",
+            ]:
+                yield _sse({"type": "status", "message": step})
 
-    # Start background ingestion
-    _set_status(user_uid, source_id, "processing", "📄 Uploading and parsing file...")
-    INGESTION_EXECUTOR.submit(_bg_ingest_file, tmp.name, user_uid, source_id)
+            _ingest_file(tmp.name, user_uid, source_id, status_cb=cb)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("File ingestion failed for source_id: %s", source_id)
+            yield _sse({"type": "error", "message": str(exc)})
+        finally:
+            try:
+                if os.path.exists(tmp.name):
+                    os.unlink(tmp.name)
+            except OSError:
+                pass
 
-    return JsonResponse({"status": "processing", "source_id": source_id}, status=202)
+    return _sse_response(_stream())
 
 
 @csrf_exempt
@@ -446,7 +463,7 @@ def api_youtube_chat(request):
     """
     POST /api/youtube/
     Form fields: url (str)
-    Returns: JSON {status, source_id}
+    Returns: SSE stream of ingestion progress events, ending with {status:ready,source_id:...}
     """
     url = request.POST.get("url", "").strip()
     if not url:
@@ -455,18 +472,20 @@ def api_youtube_chat(request):
     user_uid = _user_id(request)
     source_id = _compute_youtube_source_id(url)
 
-    # Cache hit
-    if source_exists(user_uid, source_id):
-        _set_status(user_uid, source_id, "ready")
-        return JsonResponse({"status": "ready", "source_id": source_id})
+    def _stream():
+        if source_exists(user_uid, source_id):
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+            return
 
-    # Already processing check
-    status_info = _get_status(user_uid, source_id)
-    if status_info and status_info["status"] in ("processing", "ready"):
-        return JsonResponse({"status": status_info["status"], "source_id": source_id})
+        from .rag_youtube import _ingest_youtube
+        try:
+            yield _sse({"type": "status", "message": "📺 Fetching video captions..."})
+            yield _sse({"type": "status", "message": "✂️ Chunking transcript..."})
+            yield _sse({"type": "status", "message": "🧠 Building embeddings..."})
+            _ingest_youtube(url, user_uid, source_id)
+            yield _sse({"type": "done", "status": "ready", "source_id": source_id})
+        except Exception as exc:
+            logger.exception("YouTube ingestion failed for url: %s", url)
+            yield _sse({"type": "error", "message": str(exc)})
 
-    # Start background ingestion
-    _set_status(user_uid, source_id, "processing", "🎬 Processing YouTube video...")
-    INGESTION_EXECUTOR.submit(_bg_ingest_youtube, url, user_uid, source_id)
-
-    return JsonResponse({"status": "processing", "source_id": source_id}, status=202)
+    return _sse_response(_stream())
