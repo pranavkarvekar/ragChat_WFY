@@ -147,12 +147,17 @@ def _user_id(request) -> str:
     """
     Return a stable string identifier for the requesting user.
 
-    Authenticated users → their DB primary key (str).
-    Unauthenticated requests → a per-session anonymous ID (so vectors are
-    still namespaced and don't bleed between anonymous visitors).
+    Authenticated users -> their DB primary key (str).
+    Unauthenticated requests -> a persistent client-side ID (X-Anon-Id header)
+    or a per-session anonymous ID fallback.
     """
     if request.user.is_authenticated:
         return str(request.user.id)
+    
+    client_anon = request.headers.get("X-Anon-Id")
+    if client_anon:
+        return client_anon
+
     anon_id = request.session.get("anon_id")
     if not anon_id:
         import uuid

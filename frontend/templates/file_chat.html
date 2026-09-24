@@ -230,9 +230,17 @@
 
         function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+        let clientAnonId = localStorage.getItem("client_anon_id");
+        if (!clientAnonId) {
+            clientAnonId = "anon_" + Math.random().toString(36).substring(2) + Date.now().toString(36);
+            localStorage.setItem("client_anon_id", clientAnonId);
+        }
+
         async function pollStatus(source_id, updateCb) {
             while (true) {
-                const resp = await fetch(`/api/status/?source_id=${encodeURIComponent(source_id)}`);
+                const resp = await fetch(`/api/status/?source_id=${encodeURIComponent(source_id)}`, {
+                    headers: { 'X-Anon-Id': clientAnonId }
+                });
                 if (!resp.ok) throw new Error("Failed to check status");
                 const data = await resp.json();
                 if (data.status === "ready") return;
@@ -267,7 +275,11 @@
                     const form = new FormData();
                     form.append('file', uploadedFiles[0]);
                     
-                    const resp = await fetch('/api/files/', { method: 'POST', body: form });
+                    const resp = await fetch('/api/files/', { 
+                        method: 'POST', 
+                        body: form,
+                        headers: { 'X-Anon-Id': clientAnonId }
+                    });
                     if (!resp.ok) { let m = `HTTP ${resp.status}`; try { const d = await resp.json(); m = d.error || m; } catch {} throw new Error(m); }
                     
                     const data = await resp.json();
@@ -296,7 +308,11 @@
                 chatForm.append('question', question);
                 chatForm.append('source_type', 'file');
 
-                const chatResp = await fetch('/api/chat/', { method: 'POST', body: chatForm });
+                const chatResp = await fetch('/api/chat/', { 
+                    method: 'POST', 
+                    body: chatForm,
+                    headers: { 'X-Anon-Id': clientAnonId }
+                });
                 if (!chatResp.ok) { let m = `HTTP ${chatResp.status}`; try { const d = await chatResp.json(); m = d.error || m; } catch {} throw new Error(m); }
 
                 const reader = chatResp.body.getReader(); const dec = new TextDecoder(); let buf = '';
