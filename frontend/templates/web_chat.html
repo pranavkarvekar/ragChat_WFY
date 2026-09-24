@@ -171,36 +171,7 @@
 
 
 
-        /* ingestViaSSE: POSTs to an ingest endpoint and reads SSE until {type:done} */
-        async function ingestViaSSE(endpoint, formData, statusTextEl) {
-            const resp = await fetch(endpoint, {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Anon-Id': clientAnonId }
-            });
-            if (!resp.ok) {
-                let m = `HTTP ${resp.status}`;
-                try { const d = await resp.json(); m = d.error || m; } catch {}
-                throw new Error(m);
-            }
-            const reader = resp.body.getReader();
-            const dec = new TextDecoder();
-            let buf = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buf += dec.decode(value, { stream: true });
-                const lines = buf.split('\n'); buf = lines.pop();
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const msg = JSON.parse(line.slice(6).trim());
-                    if (msg.type === 'status') statusTextEl.textContent = msg.message;
-                    if (msg.type === 'error') throw new Error(msg.message);
-                    if (msg.type === 'done') return msg.source_id;
-                }
-            }
-            throw new Error('Ingest stream ended without completion.');
-        }
+
 
         /* ── Main ask (SSE via fetch ReadableStream) ── */
         async function askQuestion() {
@@ -228,11 +199,22 @@
                 let source_id = activeChat.source_id;
 
                 if (needIngest) {
-                    statusTextEl.textContent = "Scraping webpage...";
+                    statusTextEl.textContent = "Scraping and indexing webpage (this may take a minute)...";
                     const form = new FormData();
                     form.append('url', url);
 
-                    source_id = await ingestViaSSE('/api/web/', form, statusTextEl);
+                    const resp = await fetch('/api/web/', {
+                        method: 'POST',
+                        body: form,
+                        headers: { 'X-Anon-Id': clientAnonId }
+                    });
+                    if (!resp.ok) {
+                        let m = `HTTP ${resp.status}`;
+                        try { const d = await resp.json(); m = d.error || m; } catch {}
+                        throw new Error(m);
+                    }
+                    const data = await resp.json();
+                    source_id = data.source_id;
                     activeChat.source_id = source_id;
                     saveChatHistory();
                 }
