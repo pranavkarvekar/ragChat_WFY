@@ -13,7 +13,7 @@ def main():
     process = subprocess.Popen(
         [
             "gunicorn", 
-            "backend.wsgi:application", 
+            "ragWFY.wsgi:application", 
             "--bind", "0.0.0.0:7860", 
             "--workers", "1", 
             "--threads", "4",
