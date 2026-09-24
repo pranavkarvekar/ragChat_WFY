@@ -17,18 +17,7 @@ SECRET_KEY = os.getenv(
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes")
 
-# On Render, accept any host so new service URLs (ragchat-wfy-2, etc.) always work.
-if os.getenv("RENDER") or os.getenv("ALLOW_ALL_HOSTS", "").lower() in ("1", "true", "yes"):
-    ALLOWED_HOSTS = ["*"]
-else:
-    _raw_hosts = os.getenv(
-        "ALLOWED_HOSTS",
-        "localhost,127.0.0.1,.onrender.com,"
-        "ragchat-wfy-2.onrender.com,"
-        "ragchat-wfy-elj5.onrender.com,"
-        "ragchat-wfy-1.onrender.com",
-    )
-    ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split(",") if h.strip()]
+ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -122,16 +111,10 @@ LOGOUT_REDIRECT_URL = "login"
 _raw_csrf = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
     "http://localhost:8000,http://127.0.0.1:8000,"
-    "https://ragchat-wfy-2.onrender.com,"
-    "https://ragchat-wfy-elj5.onrender.com,"
-    "https://ragchat-wfy-1.onrender.com",
+    "https://*.onrender.com,https://*.hf.space,"
+    "https://*.huggingface.co",
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _raw_csrf.split(",") if o.strip()]
-
-# Render injects the public URL — always trust it for CSRF
-_render_url = (os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
-if _render_url and _render_url not in CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS.append(_render_url)
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
